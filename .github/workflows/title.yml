@@ -1,0 +1,31 @@
+name: Title
+
+# A squash merge turns the pull request title into the commit subject on main,
+# so the title follows the commit rules. Its own workflow: a title edit reruns
+# this and never replaces a result of the code checks.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: title-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  title:
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - run: go tool gate commit-msg --subject "$TITLE"
+        env:
+          TITLE: ${{ github.event.pull_request.title }}

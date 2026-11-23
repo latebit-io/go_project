@@ -1,0 +1,134 @@
+version: "2"
+
+run:
+  modules-download-mode: readonly
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gci
+    - gofumpt
+  settings:
+    gofumpt:
+      extra:
+        group-params: true
+        clothe-returns: true
+    gci:
+      sections:
+        - standard
+        - default
+        - localmodule
+
+linters:
+  # Opt-out: a linter added by an upgrade is on until a line here says why not.
+  default: all
+  disable:
+    - depguard # tools/arch owns import rules
+    - exhaustruct # zero values are meaningful in Go
+    - exhaustruct_v5 # same check, newer engine
+    - gocyclo # cyclop measures the same thing
+    - gomodguard # deprecated
+    - nlreturn # whitespace taste; gofumpt decides
+    - noinlineerr # `if err := f(); err != nil` is idiomatic
+    - varnamelen # short names in short scopes are idiomatic
+    - wsl # deprecated
+    - wsl_v5 # whitespace taste; gofumpt decides
+
+  settings:
+    cyclop:
+      max-complexity: 10
+    dupl:
+      threshold: 100
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    exhaustive:
+      check: [switch, mapliteral]
+    forbidigo:
+      analyze-types: true # match the symbol, so an import alias cannot dodge a ban
+      forbid:
+        - pattern: ^print(ln)?$
+          msg: write to an injected io.Writer or log with slog
+        - pattern: ^fmt\.Print(f|ln)?$
+          msg: write to an injected io.Writer or log with slog
+        - pattern: ^log\.(Print|Fatal|Panic)(f|ln)?$
+          msg: log with an injected slog.Logger and return the error
+        - pattern: ^time\.Sleep$
+          msg: wait on a channel, context or testing/synctest, never on wall time
+        - pattern: ^time\.(Now|Since|Until)$
+          msg: inject a clock; only cmd and internal/platform read the wall clock
+        - pattern: ^(panic|recover)$
+          msg: return an error; a justified recover needs a reviewed //nolint with its reason
+    funlen:
+      lines: 50
+      statements: 30
+      ignore-comments: true
+    gocognit:
+      min-complexity: 15
+    gocritic:
+      enabled-tags: [diagnostic, style, performance, opinionated, experimental]
+    godox:
+      keywords: [TODO, FIXME, BUG, HACK, XXX]
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # readability of field order beats bytes
+    interfacebloat:
+      max: 5
+    lll:
+      line-length: 120
+    misspell:
+      locale: US
+    nestif:
+      min-complexity: 4
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+    sloglint:
+      no-global: all
+      context: scope
+      static-msg: true
+      key-naming-case: snake
+    revive:
+      enable-all-rules: true
+      rules:
+        # Measured by a dedicated linter above.
+        - { name: add-constant, disabled: true }
+        - { name: cognitive-complexity, disabled: true }
+        - { name: cyclomatic, disabled: true }
+        - { name: function-length, disabled: true }
+        - { name: line-length-limit, disabled: true }
+        - { name: unhandled-error, disabled: true }
+        # Need per-project arguments that nothing here sets.
+        - { name: banned-characters, disabled: true }
+        - { name: comments-density, disabled: true }
+        - { name: file-header, disabled: true }
+        - { name: max-public-structs, disabled: true }
+        - name: argument-limit
+          arguments: [4]
+        - name: function-result-limit
+          arguments: [3]
+        - name: max-control-nesting
+          arguments: [3]
+        - name: file-length-limit
+          arguments: [{ max: 300, skipComments: true, skipBlankLines: true }]
+        - name: filename-format
+          arguments: ['^[a-z][a-z0-9]*(_[a-z0-9]+)*\.go$']
+        - name: exported
+          arguments: [checkPrivateReceivers, checkPublicInterface]
+        - name: package-naming
+          arguments: [{ check-extra-bad-name: true }]
+
+  exclusions:
+    generated: strict
+    warn-unused: true
+    rules:
+      - path: _test\.go
+        linters: [dupl, err113, funlen, wrapcheck]
+      - path: ^(cmd|internal/platform)/
+        linters: [forbidigo]
+        text: time\.(Now|Since|Until)

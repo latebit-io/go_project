@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "go -C \"${CLAUDE_PROJECT_DIR}\" tool gate agent claude-stop",
+            "timeout": 600,
+            "statusMessage": "Checking the work tree..."
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "go -C \"${CLAUDE_PROJECT_DIR}\" tool gate agent claude-prompt",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
