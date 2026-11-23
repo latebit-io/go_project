@@ -95,6 +95,11 @@ func TestCheck(t *testing.T) {
 			src:     "func TestAdd() {\n\tfmt.Println()\n}\n\nfunc TestSum(n *int) {}\n\nfunc TestMax(t *T) int { return 0 }",
 		},
 		{
+			name: "an empty result list is still a test",
+			src:  "func TestAdd(t *testing.T) () {}",
+			want: notDriven,
+		},
+		{
 			// type T = testing.T, declared in another file of the package.
 			name:    "a test through a type alias from another file",
 			imports: "var other = 0",

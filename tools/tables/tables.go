@@ -67,7 +67,8 @@ func isTest(fn *ast.FuncDecl) bool {
 		return false
 	}
 
-	return fn.Type.Results == nil && takesTestingT(fn.Type.Params)
+	// NumFields is zero for no result list and for an empty one, "()".
+	return fn.Type.Results.NumFields() == 0 && takesTestingT(fn.Type.Params)
 }
 
 // takesTestingT reports a parameter list of exactly one *testing.T.
