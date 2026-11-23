@@ -123,12 +123,13 @@ func TestTrackedAndForce(t *testing.T) {
 		t.Fatalf("Force() error = %v", err)
 	}
 
-	want := "GIT_INDEX_FILE=/tmp/index git add -f --pathspec-from-file=/tmp/tracked --pathspec-file-nul"
+	want := "GIT_INDEX_FILE=/tmp/index git --literal-pathspecs add -f " +
+		"--pathspec-from-file=/tmp/tracked --pathspec-file-nul"
 	if calls := fake.Calls(); calls[len(calls)-1] != want {
 		t.Fatalf("Force() ran %q, want %q", calls[len(calls)-1], want)
 	}
 
-	failing, _ := repo(nil, map[string]proctest.Answer{"git add -f": {Err: errGit}})
+	failing, _ := repo(nil, map[string]proctest.Answer{"git --literal-pathspecs add": {Err: errGit}})
 	if err := failing.Force(t.Context(), "/tmp/index", "/tmp/tracked"); !errors.Is(err, errGit) {
 		t.Fatalf("Force() error = %v, want the failed add", err)
 	}
@@ -156,7 +157,7 @@ func TestSmallQueries(t *testing.T) {
 	r, _ := repo(nil, map[string]proctest.Answer{
 		"git rev-parse --absolute-git-dir": {Out: "/repo/.git\n"},
 		"git ls-files -s":                  {Out: "100644 abc 0\ta.go\n"},
-		"git log":                          {Out: "feat: one\nfix: two\n"},
+		"git log":                          {Out: "Merge a into b\x00 fix: two\x00"},
 	})
 
 	if dir, err := r.Dir(t.Context()); dir != "/repo/.git" || err != nil {
@@ -168,8 +169,8 @@ func TestSmallQueries(t *testing.T) {
 	}
 
 	subjects, err := r.Subjects(t.Context(), "abc")
-	if err != nil || !slices.Equal(subjects, []string{"feat: one", "fix: two"}) {
-		t.Fatalf("Subjects() = %v, %v", subjects, err)
+	if err != nil || !slices.Equal(subjects, []string{"Merge a into b", " fix: two"}) {
+		t.Fatalf("Subjects() = %q, %v, want each subject as stored, leading space kept", subjects, err)
 	}
 }
 

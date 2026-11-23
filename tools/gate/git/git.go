@@ -68,9 +68,10 @@ func (r Repo) Changed(ctx context.Context, since, filter string, pathspec ...str
 	return append(tracked, untracked...), err
 }
 
-// Subjects lists the commit subjects made since a commit.
+// Subjects lists the commit subjects made since a commit, exactly as stored:
+// a subject that starts with a space keeps it.
 func (r Repo) Subjects(ctx context.Context, since string) ([]string, error) {
-	return r.lines(ctx, "log", "--format=%s", since+"..HEAD")
+	return r.names(ctx, "log", "-z", "--format=%s", since+"..HEAD")
 }
 
 // Dir is the absolute path of the git directory.
@@ -123,7 +124,8 @@ func (r Repo) Tracked(ctx context.Context) ([]string, error) {
 // even when .gitignore matches them. Each path must exist on disk.
 func (r Repo) Force(ctx context.Context, index, list string) error {
 	env := []string{"GIT_INDEX_FILE=" + index}
-	_, err := r.line(ctx, env, "add", "-f", "--pathspec-from-file="+list, "--pathspec-file-nul")
+	// Literal: a file may be named like pathspec magic or a glob, such as ":(x).go".
+	_, err := r.line(ctx, env, "--literal-pathspecs", "add", "-f", "--pathspec-from-file="+list, "--pathspec-file-nul")
 
 	return err
 }

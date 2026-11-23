@@ -158,9 +158,10 @@ func (s *session) addTracked(ctx context.Context, index string) error {
 		return fmt.Errorf("list tracked files: %w", err)
 	}
 
-	// A tracked file deleted on disk has nothing to add, and git would refuse the list.
+	// A tracked file deleted on disk has nothing to add, and git would refuse
+	// the list. Lstat, so a symlink counts even when its target is missing.
 	present := slices.DeleteFunc(tracked, func(name string) bool {
-		_, statErr := fs.Stat(s.cfg.Tree, name)
+		_, statErr := fs.Lstat(s.cfg.Tree, name)
 
 		return statErr != nil
 	})

@@ -45,6 +45,7 @@ func TestCheckSubject(t *testing.T) {
 		"feat!: drop v1 api":                         "",
 		"chore: 2 fast 2 furious now":                "",
 		"Merge branch 'main' into feat/x":            "",
+		" fix: handle nil task":                      "starts or ends with whitespace",
 		"added stuff":                                "is not <type>",
 		"wip: try things":                            "is not <type>",
 		"feat: add a very long description here now": "7-word description",

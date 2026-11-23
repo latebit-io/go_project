@@ -60,6 +60,11 @@ func CheckSubject(subject string) error {
 		return nil
 	}
 
+	// git stores a leading space as typed, and it then shows in every log.
+	if subject != strings.TrimSpace(subject) {
+		return fmt.Errorf("%w: %q starts or ends with whitespace", ErrConvention, subject)
+	}
+
 	pattern := regexp.MustCompile(`^(` + strings.Join(types(), "|") + `)(\([a-z0-9-]+\))?!?: (.+)$`)
 
 	match := pattern.FindStringSubmatch(subject)

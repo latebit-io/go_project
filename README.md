@@ -38,6 +38,10 @@ go run ./tools/gate         # runs the whole gate
 go run ./tools/gate lint    # runs one step
 ```
 
+The pre-commit hook runs every step except `commits`: a new commit cannot
+repair an earlier subject. The commit-msg hook checks each new subject, and CI
+checks the whole branch.
+
 The `Makefile` wraps the same commands for those who have `make`.
 
 ## Gate

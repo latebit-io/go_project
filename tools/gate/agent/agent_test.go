@@ -47,7 +47,7 @@ func newRig(t *testing.T) *rig {
 		"git rev-parse --abbrev-ref HEAD":  {Out: "feat/x\n"},
 		"git rev-parse HEAD":               {Out: "abc\n"},
 		"git status":                       {Out: " M a.go\n"},
-		"git ls-files -z":                  {Out: "a.go\x00gone.go\x00gen/model.gen.go\x00"},
+		"git ls-files -z":                  {Out: "a.go\x00gone.go\x00gen/model.gen.go\x00link\x00"},
 		"git write-tree":                   {Out: firstTree + "\n"},
 		"git diff --numstat":               {Out: "5\t5\ta.go\n"},
 	}}
@@ -68,7 +68,8 @@ func (r *rig) run(t *testing.T, mode string) result {
 	done, err := agent.Run(t.Context(), &agent.Config{
 		Mode: mode,
 		Repo: git.Repo{Run: fake, Getenv: func(string) string { return "" }},
-		Tree: fstest.MapFS{"a.go": {}, "gen/model.gen.go": {}},
+		// link is a tracked symlink whose target does not exist.
+		Tree: fstest.MapFS{"a.go": {}, "gen/model.gen.go": {}, "link": {Data: []byte("nowhere"), Mode: fs.ModeSymlink}},
 		In:   strings.NewReader("{}"),
 		Out:  &out,
 		Gate: func(_ context.Context, w io.Writer) error {
@@ -150,12 +151,12 @@ func TestSnapshotForcesTrackedFiles(t *testing.T) {
 	r.run(t, "")
 
 	listed := r.state(t, "tracked")
-	if listed != "a.go\x00gen/model.gen.go" {
-		t.Fatalf("tracked list = %q, want the two files that exist", listed)
+	if listed != "a.go\x00gen/model.gen.go\x00link" {
+		t.Fatalf("tracked list = %q, want every entry that exists, the dangling symlink included", listed)
 	}
 
 	forced := slices.ContainsFunc(r.calls, func(call string) bool {
-		return strings.Contains(call, "git add -f --pathspec-from-file=") && strings.HasSuffix(call, "--pathspec-file-nul")
+		return strings.Contains(call, "git --literal-pathspecs add -f --pathspec-from-file=")
 	})
 	if !forced {
 		t.Fatalf("no forced add of the tracked files in %v", r.calls)
