@@ -102,6 +102,18 @@ func (r Repo) SetHooksPath(ctx context.Context, dir string) error {
 	return err
 }
 
+// HasSymlink reports whether a scratch index holds a symbolic link. Git stores
+// a link as its target path, so a tree says nothing about what the link reads.
+func (r Repo) HasSymlink(ctx context.Context, index string) (bool, error) {
+	entries, err := r.lines(ctx, []string{"GIT_INDEX_FILE=" + index}, "ls-files", "-s")
+	if err != nil {
+		return false, err
+	}
+
+	// 120000 is git's file mode for a symbolic link.
+	return slices.ContainsFunc(entries, func(entry string) bool { return strings.HasPrefix(entry, "120000 ") }), nil
+}
+
 // Snapshot adds the non-ignored files under the pathspec, tracked or not, to
 // a scratch index and returns the id of the tree it then holds.
 func (r Repo) Snapshot(ctx context.Context, index, pathspec string) (string, error) {
@@ -144,7 +156,7 @@ func (r Repo) HasTree(ctx context.Context, id string) bool {
 // ChangedLines counts lines added plus deleted under the pathspec between
 // two trees or commits.
 func (r Repo) ChangedLines(ctx context.Context, from, to, pathspec string) (int, error) {
-	rows, err := r.lines(ctx, "diff", "--numstat", from, to, "--", pathspec)
+	rows, err := r.lines(ctx, nil, "diff", "--numstat", from, to, "--", pathspec)
 	if err != nil {
 		return 0, err
 	}
@@ -190,8 +202,8 @@ func (r Repo) names(ctx context.Context, args ...string) ([]string, error) {
 	return strings.Split(strings.TrimSuffix(out, "\x00"), "\x00"), nil
 }
 
-func (r Repo) lines(ctx context.Context, args ...string) ([]string, error) {
-	out, err := r.line(ctx, nil, args...)
+func (r Repo) lines(ctx context.Context, env []string, args ...string) ([]string, error) {
+	out, err := r.line(ctx, env, args...)
 	if err != nil || out == "" {
 		return nil, err
 	}

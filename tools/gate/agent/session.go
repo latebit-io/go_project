@@ -111,7 +111,12 @@ func (s *session) scratchIndex() (string, error) {
 		return "", fmt.Errorf("reset scratch index: %w", err)
 	}
 
-	return filepath.Join(s.state.Name(), fileIndex), nil
+	return s.indexPath(), nil
+}
+
+// indexPath is where the scratch index of the latest snapshot lives.
+func (s *session) indexPath() string {
+	return filepath.Join(s.state.Name(), fileIndex)
 }
 
 // snapshot stores a tree of the non-ignored files under the pathspec, tracked or not.

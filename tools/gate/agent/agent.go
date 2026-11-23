@@ -182,7 +182,7 @@ func (s *session) gateThenStaging(ctx context.Context) (bool, error) {
 	}
 
 	// Same tree as the last pass: reuse it instead of spending the gate again.
-	if last != tree.key+" pass" {
+	if !tree.passedAs(last) {
 		if passed, err := s.runGate(ctx, tree.key); !passed || err != nil {
 			return false, err
 		}
@@ -201,6 +201,15 @@ func (s *session) gateThenStaging(ctx context.Context) (bool, error) {
 type identity struct {
 	work string
 	key  string
+	// complete is false when the tree holds a symbolic link: the tests can
+	// read through it to content the key does not cover.
+	complete bool
+}
+
+// passedAs reports whether a remembered result is a pass for this state that
+// may be reused. An incomplete key cannot vouch for what the gate would read.
+func (t identity) passedAs(last string) bool {
+	return t.complete && last == t.key+" pass"
 }
 
 func (s *session) identify(ctx context.Context) (identity, error) {
@@ -224,9 +233,14 @@ func (s *session) identify(ctx context.Context) (identity, error) {
 		return identity{}, fmt.Errorf("find commit: %w", err)
 	}
 
+	linked, err := s.cfg.Repo.HasSymlink(ctx, s.indexPath())
+	if err != nil {
+		return identity{}, fmt.Errorf("look for symlinks: %w", err)
+	}
+
 	sum := sha256.Sum256([]byte(strings.Join([]string{work, index, branch, head}, "\n")))
 
-	return identity{work: work, key: hex.EncodeToString(sum[:])}, nil
+	return identity{work: work, key: hex.EncodeToString(sum[:]), complete: !linked}, nil
 }
 
 func (s *session) runGate(ctx context.Context, key string) (bool, error) {

@@ -135,6 +135,33 @@ func TestTrackedAndForce(t *testing.T) {
 	}
 }
 
+func TestHasSymlink(t *testing.T) {
+	t.Parallel()
+
+	const listIndex = "git ls-files -s"
+
+	plain, _ := repo(nil, map[string]proctest.Answer{listIndex: {Out: "100644 abc 0\ta.go\n100755 def 0\trun\n"}})
+	if linked, err := plain.HasSymlink(t.Context(), "/tmp/index"); linked || err != nil {
+		t.Fatalf("HasSymlink() = %v, %v, want false for regular files", linked, err)
+	}
+
+	withLink, fake := repo(nil, map[string]proctest.Answer{
+		listIndex: {Out: "100644 abc 0\ta.go\n120000 def 0\tdata\n"},
+	})
+	if linked, err := withLink.HasSymlink(t.Context(), "/tmp/index"); !linked || err != nil {
+		t.Fatalf("HasSymlink() = %v, %v, want true for mode 120000", linked, err)
+	}
+
+	if calls := fake.Calls(); calls[0] != "GIT_INDEX_FILE=/tmp/index "+listIndex {
+		t.Fatalf("HasSymlink() ran %q, want the scratch index read", calls[0])
+	}
+
+	failing, _ := repo(nil, map[string]proctest.Answer{listIndex: {Err: errGit}})
+	if _, err := failing.HasSymlink(t.Context(), "/tmp/index"); !errors.Is(err, errGit) {
+		t.Fatalf("HasSymlink() error = %v", err)
+	}
+}
+
 func TestStagedBinaries(t *testing.T) {
 	t.Parallel()
 

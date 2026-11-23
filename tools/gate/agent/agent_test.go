@@ -163,6 +163,21 @@ func TestSnapshotForcesTrackedFiles(t *testing.T) {
 	}
 }
 
+// A link's target can change, or appear, without the tree changing, so a
+// tree that holds one is gated on every run instead of reusing a pass.
+func TestSymlinkDisablesPassReuse(t *testing.T) {
+	t.Parallel()
+
+	r := newRig(t)
+	r.answers["git ls-files -s"] = proctest.Answer{Out: "100644 abc 0\ta.go\n120000 def 0\tlink\n"}
+
+	r.run(t, "")
+
+	if again := r.run(t, ""); !again.done || r.gates != 2 {
+		t.Fatalf("second run = %+v after %d gate runs, want the gate run again on the unchanged tree", again, r.gates)
+	}
+}
+
 func TestFailingGate(t *testing.T) {
 	t.Parallel()
 
