@@ -67,42 +67,6 @@ func branchName(ctx context.Context, env *Env) error {
 	return nil
 }
 
-func commitSubjects(ctx context.Context, env *Env) error {
-	branch, err := env.Repo.Branch(ctx)
-	if err != nil {
-		return fmt.Errorf("find branch: %w", err)
-	}
-
-	if conv.Unmanaged(branch) {
-		env.sayf("ok: no branch commits to check\n")
-
-		return nil
-	}
-
-	fork, err := env.Repo.ForkPoint(ctx)
-	if err != nil {
-		return fmt.Errorf("find fork point: %w", err)
-	}
-
-	subjects, err := env.Repo.Subjects(ctx, fork)
-	if err != nil {
-		return fmt.Errorf("list commits: %w", err)
-	}
-
-	var broken []error
-	for _, subject := range subjects {
-		broken = append(broken, conv.CheckSubject(subject))
-	}
-
-	if err := errors.Join(broken...); err != nil {
-		return errors.Join(ErrFailed, err)
-	}
-
-	env.sayf("ok: %d commit subject(s) on this branch\n", len(subjects))
-
-	return nil
-}
-
 func stagedBinaries(ctx context.Context, env *Env) error {
 	found, err := env.Repo.StagedBinaries(ctx)
 	if err != nil {

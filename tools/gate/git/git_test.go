@@ -184,7 +184,6 @@ func TestSmallQueries(t *testing.T) {
 	r, _ := repo(nil, map[string]proctest.Answer{
 		"git rev-parse --absolute-git-dir": {Out: "/repo/.git\n"},
 		"git ls-files -s":                  {Out: "100644 abc 0\ta.go\n"},
-		"git log":                          {Out: "Merge a into b\x00 fix: two\x00"},
 	})
 
 	if dir, err := r.Dir(t.Context()); dir != "/repo/.git" || err != nil {
@@ -193,11 +192,6 @@ func TestSmallQueries(t *testing.T) {
 
 	if index, err := r.Index(t.Context()); index != "100644 abc 0\ta.go" || err != nil {
 		t.Fatalf("Index() = %q, %v", index, err)
-	}
-
-	subjects, err := r.Subjects(t.Context(), "abc")
-	if err != nil || !slices.Equal(subjects, []string{"Merge a into b", " fix: two"}) {
-		t.Fatalf("Subjects() = %q, %v, want each subject as stored, leading space kept", subjects, err)
 	}
 }
 

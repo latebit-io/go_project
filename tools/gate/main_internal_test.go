@@ -70,7 +70,7 @@ func TestCommitMessage(t *testing.T) {
 		t.Fatalf("commit-msg BAD = %v, want a convention error", err)
 	}
 
-	// The hook must refuse what the commits step would refuse once it is stored.
+	// git stores a leading space as typed, so the hook must refuse it.
 	padded := filepath.Join(r.app.root, "PAD")
 	if _, err := r.app.dispatch(t.Context(), []string{commitMsg, padded}); !errors.Is(err, conv.ErrConvention) {
 		t.Fatalf("commit-msg with a leading space = %v, want a convention error", err)
@@ -86,15 +86,6 @@ func TestCommitMessage(t *testing.T) {
 		if done, err := r.app.dispatch(t.Context(), args); done || err == nil {
 			t.Errorf("dispatch(%v) = %v, %v, want a failure", args, done, err)
 		}
-	}
-}
-
-func TestPreCommitLeavesExistingSubjectsToCI(t *testing.T) {
-	t.Parallel()
-
-	steps := preCommitSteps()
-	if slices.Contains(steps, "commits") || len(steps) != len(check.Names())-1 {
-		t.Fatalf("preCommitSteps() = %v, want every step except commits", steps)
 	}
 }
 

@@ -1,3 +1,3 @@
 #!/bin/sh
 # Enabled by: go run ./tools/gate setup (core.hooksPath).
-exec go run ./tools/gate pre-commit
+exec go run ./tools/gate

@@ -43,7 +43,6 @@ func cleanAnswers() map[string]proctest.Answer {
 		"golangci-lint version --short":   {Out: "2.15.0\n"},
 		"git rev-parse --abbrev-ref HEAD": {Out: "feat/x\n"},
 		"git merge-base":                  {Out: "abc\n"},
-		"git log":                         {Out: "feat: add x\x00"},
 		"git diff --name-only":            {Out: "internal/platform/x/x.go\x00"},
 		"git ls-files -o":                 {Out: "internal/platform/x/x_test.go\x00"},
 		"go env CGO_ENABLED":              {Out: "1\n"},
@@ -165,12 +164,6 @@ func TestStepsFail(t *testing.T) {
 			},
 		},
 		{
-			name: "commit subject", step: "commits", want: "6-word description",
-			change: func(_ fstest.MapFS, a map[string]proctest.Answer) {
-				a["git log"] = proctest.Answer{Out: "feat: add x\x00fix: one two three four five six\x00"}
-			},
-		},
-		{
 			name: "staged binary", step: "binaries", want: "bin/app",
 			change: func(_ fstest.MapFS, a map[string]proctest.Answer) {
 				a["git diff --cached"] = proctest.Answer{Out: "-\t-\tbin/app\x00"}
@@ -240,12 +233,6 @@ func TestStepsAdapt(t *testing.T) {
 		change func(tree fstest.MapFS, answers map[string]proctest.Answer)
 		want   string
 	}{
-		{
-			name: "default branch has no commits to check", step: "commits", want: "no branch commits",
-			change: func(_ fstest.MapFS, a map[string]proctest.Answer) {
-				a["git rev-parse --abbrev-ref HEAD"] = proctest.Answer{Out: "main\n"}
-			},
-		},
 		{
 			name: "refactor branch needs no test", step: "tests-changed", want: "needs no test change",
 			change: func(_ fstest.MapFS, a map[string]proctest.Answer) {

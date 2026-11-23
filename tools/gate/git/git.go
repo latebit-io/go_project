@@ -68,12 +68,6 @@ func (r Repo) Changed(ctx context.Context, since, filter string, pathspec ...str
 	return append(tracked, untracked...), err
 }
 
-// Subjects lists the commit subjects made since a commit, exactly as stored:
-// a subject that starts with a space keeps it.
-func (r Repo) Subjects(ctx context.Context, since string) ([]string, error) {
-	return r.names(ctx, "log", "-z", "--format=%s", since+"..HEAD")
-}
-
 // Dir is the absolute path of the git directory.
 func (r Repo) Dir(ctx context.Context) (string, error) {
 	return r.line(ctx, nil, "rev-parse", "--absolute-git-dir")

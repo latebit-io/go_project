@@ -40,7 +40,6 @@ func steps() []step {
 	return []step{
 		{name: "tools", title: "Tools and hooks", run: toolsAndHooks},
 		{name: "branch", title: "Branch name", run: branchName},
-		{name: "commits", title: "Commit subjects", run: commitSubjects},
 		{name: "tidy", title: "Module tidy", run: modTidy},
 		{name: "binaries", title: "Staged binaries", run: stagedBinaries},
 		{name: "tests-changed", title: "Tests changed", run: testsChanged},

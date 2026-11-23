@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"strings"
 
 	"github.com/latebit-io/go_project/tools/gate/agent"
@@ -20,7 +19,6 @@ import (
 )
 
 const usage = `usage: go run ./tools/gate [step...]         run the gate, or only the named steps
-       go run ./tools/gate pre-commit          the gate as the git hook runs it
        go run ./tools/gate commit-msg <file>   check a commit message (git hook)
        go run ./tools/gate commit-msg --subject <text>
        go run ./tools/gate agent [stop|prompt|claude-stop|claude-prompt]
@@ -89,8 +87,6 @@ func (a *app) dispatch(ctx context.Context, args []string) (bool, error) {
 	switch command {
 	case "agent":
 		return a.agent(ctx, rest)
-	case "pre-commit":
-		err = a.check(ctx, a.out, preCommitSteps()...)
 	case "commit-msg":
 		err = commitMessage(rest)
 	case "setup":
@@ -106,13 +102,6 @@ func (a *app) dispatch(ctx context.Context, args []string) (bool, error) {
 	}
 
 	return err == nil, err
-}
-
-// preCommitSteps is the gate without the check of existing commit subjects.
-// A commit cannot repair an earlier subject, and the commit that rewords one
-// must not be refused because of it; the commit-msg hook and CI cover subjects.
-func preCommitSteps() []string {
-	return slices.DeleteFunc(check.Names(), func(name string) bool { return name == "commits" })
 }
 
 func (a *app) repo(out io.Writer) git.Repo {

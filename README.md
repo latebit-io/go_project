@@ -38,9 +38,6 @@ go run ./tools/gate         # runs the whole gate
 go run ./tools/gate lint    # runs one step
 ```
 
-The pre-commit hook runs every step except `commits`: a new commit cannot
-repair an earlier subject. The commit-msg hook checks each new subject, and CI
-checks the whole branch.
 
 The `Makefile` wraps the same commands for those who have `make`.
 
@@ -50,7 +47,6 @@ The `Makefile` wraps the same commands for those who have `make`.
 |-----------------|------------------------------------------------------|
 | `tools`         | golangci-lint matches the pin; git hooks are enabled |
 | `branch`        | `<type>/<slug>`; no work on `main`                   |
-| `commits`       | conventional, description of five words at most      |
 | `tidy`          | `go mod tidy -diff`                                  |
 | `binaries`      | no compiled executable is staged                     |
 | `tests-changed` | Go changes come with a test change                   |
@@ -70,7 +66,9 @@ Rules and layout: [docs/architecture.md](docs/architecture.md).
 
 - Branch: `<type>/<slug>`, for example `feat/order-export`. Work on `main` is refused.
 - Commit subject: `<type>(<scope>): <description>`, description five words at
-  most; the body is free. Pull request titles follow the same rule.
+  most; the body is free. The commit-msg hook checks it as you commit.
+- Pull requests are squash-merged, so the pull request title becomes the
+  commit on `main`. It follows the same rule, and CI checks it.
 - Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.
 - A branch that changes Go code must add or change a test, unless its type is
   refactor, chore, docs, style, ci, build or revert.
