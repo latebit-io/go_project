@@ -41,16 +41,9 @@ func Check(name string, src []byte) ([]Finding, error) {
 
 	var found []Finding
 
-	// The name the file gives the testing package; without the import it
-	// cannot declare a test.
-	testing := importName(file, "testing")
-	if testing == "" {
-		return nil, nil
-	}
-
 	for _, decl := range file.Decls {
 		fn, isFunc := decl.(*ast.FuncDecl)
-		if !isFunc || !isTest(fn) || runsFromTable(fn, testing) {
+		if !isFunc || !isTest(fn) || runsFromTable(fn) {
 			continue
 		}
 
@@ -60,9 +53,9 @@ func Check(name string, src []byte) ([]Finding, error) {
 	return found, nil
 }
 
-// isTest reports a function the go tool runs as a test: named Test, or Test
-// followed by anything but a lowercase letter. TestMain sets up the test
-// binary and has no cases.
+// isTest reports a function the go tool runs as a test, by the tool's own
+// rule: named Test, or Test followed by anything but a lowercase letter, with
+// the one parameter of a test. TestMain sets up the binary and has no cases.
 func isTest(fn *ast.FuncDecl) bool {
 	rest, named := strings.CutPrefix(fn.Name.Name, "Test")
 	if !named || fn.Recv != nil || fn.Body == nil || rest == "Main" {
@@ -70,31 +63,42 @@ func isTest(fn *ast.FuncDecl) bool {
 	}
 
 	first, _ := utf8.DecodeRuneInString(rest)
-
-	return rest == "" || !unicode.IsLower(first)
-}
-
-// importName returns the name a file uses for an imported package: its
-// alias, "." for a dot import, the default name, or "" when not imported.
-func importName(file *ast.File, importPath string) string {
-	for _, spec := range file.Imports {
-		if strings.Trim(spec.Path.Value, "`\"") != importPath {
-			continue
-		}
-
-		if spec.Name != nil {
-			return spec.Name.Name
-		}
-
-		return importPath
+	if rest != "" && unicode.IsLower(first) {
+		return false
 	}
 
-	return ""
+	return fn.Type.Results == nil && takesTestingT(fn.Type.Params)
+}
+
+// takesTestingT reports a parameter list of exactly one *testing.T.
+func takesTestingT(params *ast.FieldList) bool {
+	if len(params.List) != 1 || len(params.List[0].Names) > 1 {
+		return false
+	}
+
+	return isTestingT(params.List[0].Type)
+}
+
+// isTestingT reports a pointer to T or to anything.T. Like the go tool, it
+// cannot know how testing was imported or aliased, so the name T decides.
+func isTestingT(expr ast.Expr) bool {
+	pointer, isPointer := expr.(*ast.StarExpr)
+	if !isPointer {
+		return false
+	}
+
+	if bare, isIdent := pointer.X.(*ast.Ident); isIdent {
+		return bare.Name == "T"
+	}
+
+	selector, isSelector := pointer.X.(*ast.SelectorExpr)
+
+	return isSelector && selector.Sel.Name == "T"
 }
 
 // runsFromTable reports a range loop whose body starts a subtest.
-func runsFromTable(fn *ast.FuncDecl, testing string) bool {
-	testers := testingParams(fn, testing)
+func runsFromTable(fn *ast.FuncDecl) bool {
+	testers := testingParams(fn)
 	driven := false
 
 	ast.Inspect(fn.Body, func(node ast.Node) bool {
@@ -111,12 +115,12 @@ func runsFromTable(fn *ast.FuncDecl, testing string) bool {
 
 // testingParams collects the names given to *testing.T parameters, of the
 // test itself and of the function literals inside it, whatever they are called.
-func testingParams(fn *ast.FuncDecl, testing string) map[string]bool {
+func testingParams(fn *ast.FuncDecl) map[string]bool {
 	names := map[string]bool{}
 
 	collect := func(params *ast.FieldList) {
 		for _, field := range params.List {
-			if !isTestingT(field.Type, testing) {
+			if !isTestingT(field.Type) {
 				continue
 			}
 
@@ -137,28 +141,6 @@ func testingParams(fn *ast.FuncDecl, testing string) map[string]bool {
 	})
 
 	return names
-}
-
-// isTestingT reports the type *testing.T, where testing is the name the
-// file imports the package under: "." means the type is written *T.
-func isTestingT(expr ast.Expr, testing string) bool {
-	pointer, isPointer := expr.(*ast.StarExpr)
-	if !isPointer {
-		return false
-	}
-
-	if bare, isIdent := pointer.X.(*ast.Ident); isIdent {
-		return testing == "." && bare.Name == "T"
-	}
-
-	selector, isSelector := pointer.X.(*ast.SelectorExpr)
-	if !isSelector || selector.Sel.Name != "T" {
-		return false
-	}
-
-	pkg, isIdent := selector.X.(*ast.Ident)
-
-	return isIdent && pkg.Name == testing
 }
 
 // startsSubtest reports a call of Run on one of the *testing.T values. Any

@@ -89,9 +89,26 @@ func TestCheck(t *testing.T) {
 			want: "x_test.go:5: Test is not table-driven",
 		},
 		{
-			name:    "a file that does not import testing has no tests",
+			// The go tool only runs Test functions with the test signature.
+			name:    "a Test name without the test signature is a helper",
 			imports: `import "fmt"`,
-			src:     "func TestAdd() {\n\tfmt.Println()\n}",
+			src:     "func TestAdd() {\n\tfmt.Println()\n}\n\nfunc TestSum(n *int) {}\n\nfunc TestMax(t *T) int { return 0 }",
+		},
+		{
+			// type T = testing.T, declared in another file of the package.
+			name:    "a test through a type alias from another file",
+			imports: "var other = 0",
+			src:     "func TestAdd(t *T) {}",
+			want:    notDriven,
+		},
+		{
+			name:    "a table test through a type alias from another file",
+			imports: "var other = 0",
+			src: `func TestAdd(t *T) {
+	for _, name := range []string{"a"} {
+		t.Run(name, func(t *T) {})
+	}
+}`,
 		},
 		{
 			name: "single scenario",
