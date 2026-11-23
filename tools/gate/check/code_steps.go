@@ -15,6 +15,7 @@ import (
 	"github.com/latebit-io/go_project/tools/clean"
 	"github.com/latebit-io/go_project/tools/gate/coverage"
 	"github.com/latebit-io/go_project/tools/srcwalk"
+	"github.com/latebit-io/go_project/tools/tables"
 )
 
 const (
@@ -86,6 +87,34 @@ func cleanup(_ context.Context, env *Env) error {
 
 	if total > 0 {
 		return failf("%d cleanup finding(s)", total)
+	}
+
+	return nil
+}
+
+func tableTests(_ context.Context, env *Env) error {
+	total := 0
+
+	err := srcwalk.Files(env.Tree, func(name string, src []byte) error {
+		findings, err := tables.Check(name, src)
+		if err != nil {
+			return fmt.Errorf("check: %w", err)
+		}
+
+		for _, finding := range findings {
+			env.sayf("%s\n", finding)
+		}
+
+		total += len(findings)
+
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("scan: %w", err)
+	}
+
+	if total > 0 {
+		return failf("%d test(s) are not table-driven", total)
 	}
 
 	return nil

@@ -10,6 +10,8 @@ import (
 	"github.com/latebit-io/go_project/internal/tasks/domain"
 )
 
+const storageFails = "storage error"
+
 var errStorage = errors.New("storage down")
 
 // fakeRepository is the test double for the port; app may not import adapters.
@@ -67,22 +69,33 @@ func newService(repo *fakeRepository) *app.Service {
 	return app.NewService(repo, now, func() domain.ID { return "t1" })
 }
 
-func TestAdd(t *testing.T) {
-	t.Parallel()
+// withOpenTask returns a service whose repository holds the open task t1.
+func withOpenTask(t *testing.T, repo *fakeRepository) *app.Service {
+	t.Helper()
 
-	repo := &fakeRepository{}
+	service := newService(repo)
 
-	task, err := newService(repo).Add(t.Context(), "write docs")
-	if err != nil {
+	if _, err := service.Add(t.Context(), "write docs"); err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
 
-	if task.ID() != "t1" || !task.CreatedAt().Equal(now()) || repo.tasks["t1"] != task {
-		t.Fatalf("Add() = %+v, want stored task t1 created now", task)
-	}
+	return service
 }
 
-func TestAddFails(t *testing.T) {
+// withDoneTask returns a service whose repository holds t1, already completed.
+func withDoneTask(t *testing.T, repo *fakeRepository) *app.Service {
+	t.Helper()
+
+	service := withOpenTask(t, repo)
+
+	if _, err := service.Complete(t.Context(), "t1"); err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+
+	return service
+}
+
+func TestAdd(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -91,16 +104,23 @@ func TestAddFails(t *testing.T) {
 		repo    *fakeRepository
 		wantErr error
 	}{
+		{name: "stores an open task", title: "write docs", repo: &fakeRepository{}},
 		{name: "invalid title", title: "", repo: &fakeRepository{}, wantErr: domain.ErrEmptyTitle},
-		{name: "storage error", title: "write docs", repo: &fakeRepository{saveErr: errStorage}, wantErr: errStorage},
+		{name: storageFails, title: "write docs", repo: &fakeRepository{saveErr: errStorage}, wantErr: errStorage},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := newService(tt.repo).Add(t.Context(), tt.title); !errors.Is(err, tt.wantErr) {
+			task, err := newService(tt.repo).Add(t.Context(), tt.title)
+			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("Add() error = %v, want %v", err, tt.wantErr)
+			}
+
+			stored := err == nil && task.ID() == "t1" && task.CreatedAt().Equal(now()) && tt.repo.tasks["t1"] == task
+			if stored != (tt.wantErr == nil) {
+				t.Fatalf("Add() = %+v, stored %v, want stored only on success", task, tt.repo.tasks)
 			}
 		})
 	}
@@ -109,61 +129,60 @@ func TestAddFails(t *testing.T) {
 func TestComplete(t *testing.T) {
 	t.Parallel()
 
-	service := newService(&fakeRepository{})
-
-	if _, err := service.Add(t.Context(), "write docs"); err != nil {
-		t.Fatalf("Add() error = %v", err)
+	tests := []struct {
+		name string
+		id   domain.ID
+		// given builds the service and the task it already holds.
+		given      func(t *testing.T, repo *fakeRepository) *app.Service
+		storageErr error
+		wantErr    error
+	}{
+		{name: "completes an open task", id: "t1", given: withOpenTask},
+		{name: "a task completes once", id: "t1", given: withDoneTask, wantErr: domain.ErrAlreadyDone},
+		{name: "unknown task", id: "missing", given: withOpenTask, wantErr: domain.ErrNotFound},
+		{name: storageFails, id: "t1", given: withOpenTask, storageErr: errStorage, wantErr: errStorage},
 	}
 
-	task, err := service.Complete(t.Context(), "t1")
-	if err != nil || !task.Done() {
-		t.Fatalf("Complete() = %+v, %v, want done task", task, err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	if _, err := service.Complete(t.Context(), "t1"); !errors.Is(err, domain.ErrAlreadyDone) {
-		t.Fatalf("second Complete() error = %v, want %v", err, domain.ErrAlreadyDone)
-	}
+			repo := &fakeRepository{}
+			service := tt.given(t, repo)
+			repo.saveErr = tt.storageErr
 
-	if _, err := service.Complete(t.Context(), "missing"); !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("Complete(missing) error = %v, want %v", err, domain.ErrNotFound)
-	}
-}
-
-func TestCompleteReportsStorageError(t *testing.T) {
-	t.Parallel()
-
-	repo := &fakeRepository{}
-	service := newService(repo)
-
-	if _, err := service.Add(t.Context(), "write docs"); err != nil {
-		t.Fatalf("Add() error = %v", err)
-	}
-
-	repo.saveErr = errStorage
-
-	if _, err := service.Complete(t.Context(), "t1"); !errors.Is(err, errStorage) {
-		t.Fatalf("Complete() error = %v, want %v", err, errStorage)
+			task, err := service.Complete(t.Context(), tt.id)
+			if !errors.Is(err, tt.wantErr) || (err == nil && !task.Done()) {
+				t.Fatalf("Complete() = %+v, %v, want error %v", task, err, tt.wantErr)
+			}
+		})
 	}
 }
 
 func TestList(t *testing.T) {
 	t.Parallel()
 
-	repo := &fakeRepository{}
-	service := newService(repo)
-
-	if _, err := service.Add(t.Context(), "write docs"); err != nil {
-		t.Fatalf("Add() error = %v", err)
+	tests := []struct {
+		name    string
+		listErr error
+		want    int
+	}{
+		{name: "returns the stored tasks", want: 1},
+		{name: storageFails, listErr: errStorage},
 	}
 
-	tasks, err := service.List(t.Context())
-	if err != nil || len(tasks) != 1 {
-		t.Fatalf("List() = %v, %v, want one task", tasks, err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	repo.listErr = errStorage
+			repo := &fakeRepository{}
+			service := withOpenTask(t, repo)
+			repo.listErr = tt.listErr
 
-	if _, err := service.List(t.Context()); !errors.Is(err, errStorage) {
-		t.Fatalf("List() error = %v, want %v", err, errStorage)
+			tasks, err := service.List(t.Context())
+			if !errors.Is(err, tt.listErr) || len(tasks) != tt.want {
+				t.Fatalf("List() = %v, %v, want %d task(s) and error %v", tasks, err, tt.want, tt.listErr)
+			}
+		})
 	}
 }

@@ -26,6 +26,6 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
-      - run: go run ./tools/gate commit-msg --subject "$TITLE"
+      - run: go tool gate commit-msg --subject "$TITLE"
         env:
           TITLE: ${{ github.event.pull_request.title }}

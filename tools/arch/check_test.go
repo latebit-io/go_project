@@ -7,7 +7,10 @@ import (
 	"github.com/latebit-io/go_project/tools/arch"
 )
 
-const module = "example.com/shop"
+const (
+	module          = "example.com/shop"
+	domainImportsOS = `internal/ordering/domain: import: domain may not import "os"`
+)
 
 const outsideLayout = ": layout: package sits outside cmd/<name>, " +
 	"internal/<context>/{domain,app,adapters}, internal/platform, tools"
@@ -19,7 +22,7 @@ func pkg(dir, name string, imports ...string) arch.File {
 func TestCheckAllows(t *testing.T) {
 	t.Parallel()
 
-	pkgs := []arch.File{
+	tests := []arch.File{
 		pkg("cmd/shop-api", "main", module+"/internal/ordering/adapters/http", module+"/internal/platform/log"),
 		pkg("internal/ordering/domain", "domain", "errors", "net/url", module+"/internal/ordering/domain/money"),
 		pkg("internal/ordering/domain/money", "money", "math/big"),
@@ -30,8 +33,14 @@ func TestCheckAllows(t *testing.T) {
 		pkg("tools/gate", "main", "os/exec", module+"/tools/arch"),
 	}
 
-	if got := arch.Check(module, pkgs); len(got) != 0 {
-		t.Fatalf("Check() = %v, want no violations", got)
+	for _, file := range tests {
+		t.Run(file.Dir, func(t *testing.T) {
+			t.Parallel()
+
+			if got := arch.Check(module, []arch.File{file}); len(got) != 0 {
+				t.Fatalf("Check() = %v, want no violations", got)
+			}
+		})
 	}
 }
 
@@ -167,23 +176,45 @@ func TestCheckRejects(t *testing.T) {
 func TestCheckSortsAndDeduplicates(t *testing.T) {
 	t.Parallel()
 
-	pkgs := []arch.File{
-		pkg("internal/ordering/domain", "domain", "os", "flag", "os"),
-		pkg("internal/billing/domain", "domain", "syscall"),
+	tests := []struct {
+		name  string
+		files []arch.File
+		want  []string
+	}{
+		{
+			name: "sorted across packages, a repeated import reported once",
+			files: []arch.File{
+				pkg("internal/ordering/domain", "domain", "os", "flag", "os"),
+				pkg("internal/billing/domain", "domain", "syscall"),
+			},
+			want: []string{
+				`internal/billing/domain: import: domain may not import "syscall"`,
+				`internal/ordering/domain: import: domain may not import "flag"`,
+				domainImportsOS,
+			},
+		},
+		{
+			name: "the same violation in two files of a package is reported once",
+			files: []arch.File{
+				pkg("internal/ordering/domain", "domain", "os"),
+				pkg("internal/ordering/domain", "domain", "os"),
+			},
+			want: []string{domainImportsOS},
+		},
 	}
 
-	want := []string{
-		`internal/billing/domain: import: domain may not import "syscall"`,
-		`internal/ordering/domain: import: domain may not import "flag"`,
-		`internal/ordering/domain: import: domain may not import "os"`,
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	got := make([]string, 0, len(want))
-	for _, v := range arch.Check(module, pkgs) {
-		got = append(got, v.String())
-	}
+			got := make([]string, 0, len(tt.want))
+			for _, v := range arch.Check(module, tt.files) {
+				got = append(got, v.String())
+			}
 
-	if !slices.Equal(got, want) {
-		t.Fatalf("Check() = %v, want %v", got, want)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("Check() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

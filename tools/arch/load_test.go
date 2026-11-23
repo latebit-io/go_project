@@ -36,62 +36,90 @@ func hiddenFiles() fstest.MapFS {
 func TestLoadReadsEveryFile(t *testing.T) {
 	t.Parallel()
 
-	module, files, err := arch.Load(hiddenFiles())
-	if err != nil || module != "example.com/shop" {
-		t.Fatalf("Load() module = %q, error = %v", module, err)
-	}
-
-	got := make([]string, 0, len(files))
-	for _, file := range files {
-		row := []string{file.Name, file.Package, strings.Join(file.Imports, ","), file.Excluded}
-		got = append(got, strings.Join(row, "|"))
-	}
-
 	const constrained = "has a build constraint"
 
-	want := []string{
-		"gen.go|main||" + constrained,
-		"io_linux.go|domain|os|is left out of the darwin/arm64 build",
-		"order.go|domain|errors|",
-		"order_it.go|domain|net/http|" + constrained,
-		"sock.go|domain||" + constrained,
-		"version.go|domain||" + constrained,
-		"x_test.go|domain|testing|",
-		"only.go|tagged||" + constrained,
+	// What Load must report for each file: package, imports, why it is excluded.
+	tests := map[string]string{
+		"gen.go":      "main||" + constrained,
+		"io_linux.go": "domain|os|is left out of the darwin/arm64 build",
+		"order.go":    "domain|errors|",
+		"order_it.go": "domain|net/http|" + constrained,
+		"sock.go":     "domain||" + constrained,
+		"version.go":  "domain||" + constrained,
+		"x_test.go":   "domain|testing|",
+		"only.go":     "tagged||" + constrained,
 	}
-	if !slices.Equal(got, want) {
-		t.Fatalf("Load() files =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+
+	module, files, err := arch.Load(hiddenFiles())
+	if err != nil || module != "example.com/shop" || len(files) != len(tests) {
+		t.Fatalf("Load() = %q, %d files, %v, want example.com/shop and %d files", module, len(files), err, len(tests))
+	}
+
+	for _, file := range files {
+		t.Run(file.Name, func(t *testing.T) {
+			t.Parallel()
+
+			got := strings.Join([]string{file.Package, strings.Join(file.Imports, ","), file.Excluded}, "|")
+			if got != tests[file.Name] {
+				t.Fatalf("Load() read %s as %q, want %q", file.Name, got, tests[file.Name])
+			}
+		})
 	}
 }
 
 func TestLoadedFilesAreChecked(t *testing.T) {
 	t.Parallel()
 
-	module, files, err := arch.Load(hiddenFiles())
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-
-	got := make([]string, 0, len(files))
-	for _, v := range arch.Check(module, files) {
-		got = append(got, v.String())
-	}
-
 	const missed = ", so lint and tests would miss it somewhere"
 
-	want := []string{
-		"internal/ordering/domain: build: gen.go has a build constraint" + missed,
-		"internal/ordering/domain: build: io_linux.go is left out of the darwin/arm64 build" + missed,
-		"internal/ordering/domain: build: order_it.go has a build constraint" + missed,
-		"internal/ordering/domain: build: sock.go has a build constraint" + missed,
-		"internal/ordering/domain: build: version.go has a build constraint" + missed,
-		`internal/ordering/domain: import: domain may not import "net/http"`,
-		`internal/ordering/domain: import: domain may not import "os"`,
-		"internal/ordering/domain: naming: package main belongs under cmd/<name>",
-		"pkg/tagged" + outsideLayout,
+	tests := []struct {
+		name string
+		tree fstest.MapFS
+		want []string
+	}{
+		{
+			name: "files hidden from the default build are still judged",
+			tree: hiddenFiles(),
+			want: []string{
+				"internal/ordering/domain: build: gen.go has a build constraint" + missed,
+				"internal/ordering/domain: build: io_linux.go is left out of the darwin/arm64 build" + missed,
+				"internal/ordering/domain: build: order_it.go has a build constraint" + missed,
+				"internal/ordering/domain: build: sock.go has a build constraint" + missed,
+				"internal/ordering/domain: build: version.go has a build constraint" + missed,
+				`internal/ordering/domain: import: domain may not import "net/http"`,
+				domainImportsOS,
+				"internal/ordering/domain: naming: package main belongs under cmd/<name>",
+				"pkg/tagged" + outsideLayout,
+			},
+		},
+		{
+			name: "a clean module has nothing to report",
+			tree: fstest.MapFS{
+				goMod:                               source("module example.com/shop\n"),
+				"internal/ordering/domain/order.go": source("package domain\n\nimport \"errors\"\n"),
+			},
+			want: []string{},
+		},
 	}
-	if !slices.Equal(got, want) {
-		t.Fatalf("Check() =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			module, files, err := arch.Load(tt.tree)
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+
+			got := make([]string, 0, len(tt.want))
+			for _, v := range arch.Check(module, files) {
+				got = append(got, v.String())
+			}
+
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("Check() =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(tt.want, "\n"))
+			}
+		})
 	}
 }
 

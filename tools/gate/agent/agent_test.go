@@ -18,12 +18,17 @@ import (
 	"github.com/latebit-io/go_project/tools/gate/proc/proctest"
 )
 
-const firstTree = "tree1"
+const (
+	firstTree   = "tree1"
+	writeTree   = "git write-tree"
+	numstat     = "git diff --numstat"
+	stop        = "stop"
+	claudeStop  = "claude-stop"
+	stagingAsk  = "QUESTION: The gate passes"
+	simplifyAsk = "simplify pass"
+)
 
 var errGate = errors.New("lint: check failed")
-
-// secondTree is what git answers once the work tree has changed.
-func secondTree() proctest.Answer { return proctest.Answer{Out: "tree2\n"} }
 
 // rig is a repository with scripted git answers and a countable gate.
 type rig struct {
@@ -48,12 +53,15 @@ func newRig(t *testing.T) *rig {
 		"git rev-parse HEAD":               {Out: "abc\n"},
 		"git status":                       {Out: " M a.go\n"},
 		"git ls-files -z":                  {Out: "a.go\x00gone.go\x00gen/model.gen.go\x00link\x00"},
-		"git write-tree":                   {Out: firstTree + "\n"},
-		"git diff --numstat":               {Out: "5\t5\ta.go\n"},
+		writeTree:                          {Out: firstTree + "\n"},
+		numstat:                            {Out: "5\t5\ta.go\n"},
 	}}
 }
 
-// result is what one run of the step printed and whether it reported done.
+// newTree makes git report a changed work tree from now on.
+func newTree(r *rig) { r.answers[writeTree] = proctest.Answer{Out: "tree2\n"} }
+
+// result is whether one run of the step reported done, and what it printed.
 type result struct {
 	done bool
 	out  string
@@ -104,220 +112,212 @@ func (r *rig) state(t *testing.T, name string) string {
 	return strings.TrimSpace(string(data))
 }
 
-func TestCleanTreeNeedsNothing(t *testing.T) {
-	t.Parallel()
+// act is one run of the step within a scenario, and what it must do.
+type act struct {
+	mode string
+	// before changes the repository or the gate ahead of this run.
+	before func(r *rig)
+	done   bool
+	// out must appear in the output; silent requires no output at all.
+	out    string
+	silent bool
+	// gates is how often the gate has run so far in the scenario.
+	gates int
+}
 
-	r := newRig(t)
-	r.answers["git status"] = proctest.Answer{}
+// perform runs the act and fails the test unless it went as described.
+func (a act) perform(t *testing.T, r *rig) {
+	t.Helper()
 
-	got := r.run(t, "")
-	if !got.done || !strings.Contains(got.out, "nothing uncommitted") || r.gates != 0 {
-		t.Fatalf("run = %+v after %d gate runs, want a quiet success without the gate", got, r.gates)
+	if a.before != nil {
+		a.before(r)
 	}
 
-	if hook := r.run(t, "stop"); hook.out != "" {
-		t.Fatalf("stop hook printed %q, want silence", hook.out)
+	got := r.run(t, a.mode)
+	if got.done != a.done || !strings.Contains(got.out, a.out) || (a.silent && got.out != "") || r.gates != a.gates {
+		t.Fatalf("run %q = %+v after %d gate runs, want %+v", a.mode, got, r.gates, a)
 	}
 }
 
-func TestPassingGateAsksAboutStagingOncePerTree(t *testing.T) {
-	t.Parallel()
-
-	r := newRig(t)
-
-	first := r.run(t, "")
-	if first.done || !strings.HasPrefix(first.out, "QUESTION: The gate passes") {
-		t.Fatalf("first run = %+v, want the staging question", first)
-	}
-
-	second := r.run(t, "")
-	if !second.done || !strings.Contains(second.out, "nothing to ask") || r.gates != 1 {
-		t.Fatalf("second run = %+v after %d gate runs, want the cached pass and no question", second, r.gates)
-	}
-
-	r.answers["git write-tree"] = secondTree()
-
-	if third := r.run(t, ""); third.done || r.gates != 2 {
-		t.Fatalf("run on a new tree = %+v after %d gate runs, want the gate and the question again", third, r.gates)
-	}
+// scenario is a repository and a series of acts on it.
+type scenario struct {
+	name string
+	// given prepares the repository before the first act.
+	given func(r *rig)
+	// acts run in order on one repository, sharing its state files.
+	acts []act
+	// state lists state files and what they must hold afterwards.
+	state map[string]string
+	// call, when set, must start one of the commands of the last act.
+	call string
 }
 
-// A tracked file that .gitignore matches must be in the snapshot, or an edit
-// to it would reuse a remembered pass. Files deleted on disk are left out.
-func TestSnapshotForcesTrackedFiles(t *testing.T) {
-	t.Parallel()
+// verify checks what the scenario left behind after its last act.
+func (s scenario) verify(t *testing.T, r *rig) {
+	t.Helper()
 
-	r := newRig(t)
-	r.run(t, "")
-
-	listed := r.state(t, "tracked")
-	if listed != "a.go\x00gen/model.gen.go\x00link" {
-		t.Fatalf("tracked list = %q, want every entry that exists, the dangling symlink included", listed)
-	}
-
-	forced := slices.ContainsFunc(r.calls, func(call string) bool {
-		return strings.Contains(call, "git --literal-pathspecs add -f --pathspec-from-file=")
-	})
-	if !forced {
-		t.Fatalf("no forced add of the tracked files in %v", r.calls)
-	}
-}
-
-// A link's target can change, or appear, without the tree changing, so a
-// tree that holds one is gated on every run instead of reusing a pass.
-func TestSymlinkDisablesPassReuse(t *testing.T) {
-	t.Parallel()
-
-	r := newRig(t)
-	r.answers["git ls-files -s"] = proctest.Answer{Out: "100644 abc 0\ta.go\n120000 def 0\tlink\n"}
-
-	r.run(t, "")
-
-	if again := r.run(t, ""); !again.done || r.gates != 2 {
-		t.Fatalf("second run = %+v after %d gate runs, want the gate run again on the unchanged tree", again, r.gates)
-	}
-}
-
-func TestFailingGate(t *testing.T) {
-	t.Parallel()
-
-	r := newRig(t)
-	r.gateErr = errGate
-
-	got := r.run(t, "")
-	shown := strings.Contains(got.out, "finding 1") && strings.Contains(got.out, "never weaken")
-
-	if got.done || !shown {
-		t.Fatalf("run = %+v, want not done, with the gate output", got)
-	}
-
-	if hook := r.run(t, "claude-stop"); !hook.done || !strings.Contains(hook.out, `"systemMessage"`) {
-		t.Fatalf("claude-stop on the same failing tree = %+v, want it let through with a note", hook)
-	}
-
-	if hook := r.run(t, "stop"); !hook.done || !strings.Contains(hook.out, "nothing changed since") {
-		t.Fatalf("stop on the same failing tree = %+v, want it let through with a note", hook)
-	}
-
-	// The user's next message may follow a fix outside the tree, such as
-	// installing a tool, so the failure is forgotten and the gate runs again.
-	r.run(t, "prompt")
-
-	if hook := r.run(t, "stop"); hook.done || r.gates != 2 {
-		t.Fatalf("stop after a user prompt = %+v after %d gate runs, want the gate retried", hook, r.gates)
-	}
-}
-
-func TestFailingGateBlocksAClaudeStop(t *testing.T) {
-	t.Parallel()
-
-	r := newRig(t)
-	r.gateErr = errGate
-
-	hook := r.run(t, "claude-stop")
-	blocked := strings.Contains(hook.out, `"decision":"block"`) && strings.Contains(hook.out, "finding 1")
-
-	if !hook.done || !blocked || r.gates != 1 {
-		t.Fatalf("claude-stop on a failing tree = %+v after %d gate runs, want a JSON block", hook, r.gates)
-	}
-}
-
-func TestPassIsNotRecordedForATreeThatMoved(t *testing.T) {
-	t.Parallel()
-
-	r := newRig(t)
-	r.duringGate = func() { r.answers["git write-tree"] = secondTree() }
-
-	got := r.run(t, "")
-	if got.done || !strings.Contains(got.out, "Files changed while the gate ran") {
-		t.Fatalf("run = %+v, want the pass refused because the tree moved", got)
-	}
-
-	if r.state(t, "gate-result") != "" {
-		t.Fatalf("gate-result = %q, want nothing recorded", r.state(t, "gate-result"))
-	}
-
-	r.duringGate = nil
-
-	if again := r.run(t, ""); again.done || !strings.Contains(again.out, "stage them") || r.gates != 2 {
-		t.Fatalf("second run = %+v after %d gate runs, want the gate rerun on the settled tree", again, r.gates)
-	}
-}
-
-func TestMajorChangeAsksAboutSimplify(t *testing.T) {
-	t.Parallel()
-
-	r := newRig(t)
-	r.answers["git diff --numstat"] = proctest.Answer{Out: "150\t60\ta.go\n"}
-
-	hook := r.run(t, "claude-stop")
-	blocked := strings.Contains(hook.out, `"decision":"block"`) && strings.Contains(hook.out, "210 lines")
-
-	if !hook.done || !blocked {
-		t.Fatalf("claude-stop = %+v, want a JSON block with the simplify question", hook)
-	}
-
-	if r.gates != 0 || r.state(t, "simplify-asked") != firstTree {
-		t.Fatalf("gate ran %d times, asked=%q; the question comes before the gate", r.gates, r.state(t, "simplify-asked"))
-	}
-
-	if again := r.run(t, "claude-stop"); !strings.Contains(again.out, "stage them") {
-		t.Fatalf("second stop = %+v, want no repeat of the simplify question", again)
-	}
-
-	if prompt := r.run(t, "claude-prompt"); !prompt.done || r.state(t, "simplify-baseline") != firstTree {
-		t.Fatalf("prompt = %+v, baseline=%q, want the question settled", prompt, r.state(t, "simplify-baseline"))
-	}
-}
-
-func TestDirectRunSettlesWhenWorkContinues(t *testing.T) {
-	t.Parallel()
-
-	r := newRig(t)
-	r.answers["git diff --numstat"] = proctest.Answer{Out: "300\t0\ta.go\n"}
-
-	if got := r.run(t, ""); got.done || !strings.Contains(got.out, "simplify pass") {
-		t.Fatalf("run = %+v, want the simplify question", got)
-	}
-
-	r.answers["git write-tree"] = secondTree()
-	r.answers["git diff --numstat"] = proctest.Answer{Out: "3\t0\ta.go\n"}
-
-	got := r.run(t, "")
-	if r.state(t, "simplify-baseline") != firstTree || strings.Contains(got.out, "simplify pass") {
-		t.Fatalf("run after more work = %+v, want the old question settled and no new one", got)
-	}
-}
-
-func TestRunReportsGitFailure(t *testing.T) {
-	t.Parallel()
-
-	fake := &proctest.Fake{Answers: map[string]proctest.Answer{"git": {Err: errGate}}}
-
-	repo := git.Repo{Run: fake, Getenv: func(string) string { return "" }}
-
-	done, err := agent.Run(t.Context(), &agent.Config{Repo: repo})
-	if done || !errors.Is(err, errGate) {
-		t.Fatalf("Run() = %v, %v, want the git failure", done, err)
-	}
-
-	// Claude Code ignores a failing exit, so its hook must say so in JSON.
-	var out bytes.Buffer
-
-	hook := &agent.Config{Mode: "claude-stop", Repo: repo, In: strings.NewReader(""), Out: &out}
-
-	done, err = agent.Run(t.Context(), hook)
-	if !done || err != nil || !strings.Contains(out.String(), "could not run") {
-		t.Fatalf("Run(claude-stop) = %v, %v with %q, want the failure as a system message", done, err, out.String())
-	}
-}
-
-func TestRunRejectsUnknownModes(t *testing.T) {
-	t.Parallel()
-
-	for _, mode := range []string{"claude-stp", "claude-", "run", "stop now"} {
-		if _, err := agent.Run(t.Context(), &agent.Config{Mode: mode}); !errors.Is(err, agent.ErrMode) {
-			t.Errorf("Run(%q) = %v, want an unknown mode error", mode, err)
+	for file, want := range s.state {
+		if got := r.state(t, file); got != want {
+			t.Fatalf("state %s = %q, want %q", file, got, want)
 		}
+	}
+
+	started := slices.ContainsFunc(r.calls, func(call string) bool { return strings.HasPrefix(call, s.call) })
+	if !started {
+		t.Fatalf("no command starting with %q in %v", s.call, r.calls)
+	}
+}
+
+func TestStep(t *testing.T) {
+	t.Parallel()
+
+	tests := []scenario{
+		{
+			name:  "a clean tree needs nothing, and a hook stays silent",
+			given: func(r *rig) { r.answers["git status"] = proctest.Answer{} },
+			acts: []act{
+				{mode: "", done: true, out: "nothing uncommitted"},
+				{mode: stop, done: true, silent: true},
+			},
+		},
+		{
+			name: "a passing gate asks about staging once per tree",
+			acts: []act{
+				{mode: "", out: stagingAsk, gates: 1},
+				{mode: "", done: true, out: "nothing to ask", gates: 1},
+				{mode: "", before: newTree, out: stagingAsk, gates: 2},
+			},
+		},
+		{
+			// A tracked file that .gitignore matches must be in the snapshot, or an
+			// edit to it would reuse a remembered pass. Deleted files are left out.
+			name:  "the snapshot adds every tracked file that exists, by name",
+			acts:  []act{{mode: "", out: stagingAsk, gates: 1}},
+			state: map[string]string{"tracked": "a.go\x00gen/model.gen.go\x00link"},
+			call:  "GIT_INDEX_FILE=",
+		},
+		{
+			// A link's target can change without the tree changing.
+			name: "a symlink in the tree disables reuse of a pass",
+			given: func(r *rig) {
+				r.answers["git ls-files -s"] = proctest.Answer{Out: "100644 abc 0\ta.go\n120000 def 0\tlink\n"}
+			},
+			acts: []act{
+				{mode: "", out: stagingAsk, gates: 1},
+				{mode: "", done: true, gates: 2},
+			},
+		},
+		{
+			name:  "a failing gate is reported, then let go until the user has had a turn",
+			given: func(r *rig) { r.gateErr = errGate },
+			acts: []act{
+				{mode: "", out: "finding 1", gates: 1},
+				{mode: claudeStop, done: true, out: `"systemMessage"`, gates: 1},
+				{mode: stop, done: true, out: "nothing changed since", gates: 1},
+				{mode: "prompt", done: true, gates: 1},
+				{mode: stop, out: "never weaken", gates: 2},
+			},
+		},
+		{
+			name:  "a failing gate blocks a Claude Code stop with its output",
+			given: func(r *rig) { r.gateErr = errGate },
+			acts:  []act{{mode: claudeStop, done: true, out: `"decision":"block"`, gates: 1}},
+		},
+		{
+			name:  "a pass is not recorded for a tree that moved during the gate",
+			given: func(r *rig) { r.duringGate = func() { newTree(r) } },
+			acts: []act{
+				{mode: "", out: "Files changed while the gate ran", gates: 1},
+				{mode: "", before: func(r *rig) { r.duringGate = nil }, out: stagingAsk, gates: 2},
+			},
+		},
+		{
+			name:  "a major change asks about simplify first, once, and the prompt settles it",
+			given: func(r *rig) { r.answers[numstat] = proctest.Answer{Out: "150\t60\ta.go\n"} },
+			acts: []act{
+				{mode: claudeStop, done: true, out: "210 lines"},
+				{mode: claudeStop, done: true, out: "stage them", gates: 1},
+				{mode: "claude-prompt", done: true, gates: 1},
+			},
+			state: map[string]string{"simplify-baseline": firstTree, "simplify-asked": ""},
+		},
+		{
+			name:  "without a prompt hook, continued work settles the simplify question",
+			given: func(r *rig) { r.answers[numstat] = proctest.Answer{Out: "300\t0\ta.go\n"} },
+			acts: []act{
+				{mode: "", out: simplifyAsk},
+				{
+					mode: "", out: stagingAsk, gates: 1,
+					before: func(r *rig) {
+						newTree(r)
+						r.answers[numstat] = proctest.Answer{Out: "3\t0\ta.go\n"}
+					},
+				},
+			},
+			state: map[string]string{"simplify-baseline": firstTree},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			r := newRig(t)
+			if tt.given != nil {
+				tt.given(r)
+			}
+
+			for _, each := range tt.acts {
+				each.perform(t, r)
+			}
+
+			tt.verify(t, r)
+		})
+	}
+}
+
+func TestRunFails(t *testing.T) {
+	t.Parallel()
+
+	broken := map[string]proctest.Answer{"git": {Err: errGate}}
+
+	tests := []struct {
+		name    string
+		mode    string
+		answers map[string]proctest.Answer
+		// wantErr is what Run returns; a Claude Code hook reports in JSON instead.
+		wantErr  error
+		wantDone bool
+		wantOut  string
+	}{
+		{name: "git failure", answers: broken, wantErr: errGate},
+		{
+			name: "git failure in a Claude Code hook", mode: claudeStop, answers: broken,
+			wantDone: true, wantOut: "could not run",
+		},
+		{name: "misspelled mode", mode: "claude-stp", wantErr: agent.ErrMode},
+		{name: "claude without a hook", mode: "claude-", wantErr: agent.ErrMode},
+		{name: "run is not a mode", mode: "run", wantErr: agent.ErrMode},
+		{name: "two words", mode: "stop now", wantErr: agent.ErrMode},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+
+			fake := &proctest.Fake{Answers: tt.answers}
+			done, err := agent.Run(t.Context(), &agent.Config{
+				Mode: tt.mode,
+				Repo: git.Repo{Run: fake, Getenv: func(string) string { return "" }},
+				In:   strings.NewReader(""),
+				Out:  &out,
+			})
+
+			if done != tt.wantDone || !errors.Is(err, tt.wantErr) || !strings.Contains(out.String(), tt.wantOut) {
+				t.Fatalf("Run(%q) = %v, %v with %q, want %+v", tt.mode, done, err, out.String(), tt)
+			}
+		})
 	}
 }

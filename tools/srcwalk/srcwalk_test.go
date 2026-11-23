@@ -10,7 +10,10 @@ import (
 	"github.com/latebit-io/go_project/tools/srcwalk"
 )
 
-var errBroken = errors.New("disk on fire")
+var (
+	errBroken = errors.New("disk on fire")
+	errStop   = errors.New("stop")
+)
 
 // errFS fails every open, like a tree that cannot be read.
 type errFS struct{}
@@ -21,59 +24,74 @@ func file(content string) *fstest.MapFile {
 	return &fstest.MapFile{Data: []byte(content)}
 }
 
-func TestFilesVisitsGoFilesInOrder(t *testing.T) {
+func TestFiles(t *testing.T) {
 	t.Parallel()
 
-	tree := fstest.MapFS{
-		"b/b.go":          file("b"),
-		"a/a_linux.go":    file("a"),
-		"a/a_test.go":     file("t"),
-		"README.md":       file("no"),
-		"a/testdata/x.go": file("no"),
-		"vendor/v/v.go":   file("no"),
-		".cache/c.go":     file("no"),
-		"_old/o.go":       file("no"),
+	tests := []struct {
+		name     string
+		tree     fs.FS
+		visitErr error
+		want     []string
+		wantErr  error
+	}{
+		{
+			name: "go files in lexical order, skipped directories left out",
+			tree: fstest.MapFS{
+				"b/b.go":          file("b"),
+				"a/a_linux.go":    file("a"),
+				"a/a_test.go":     file("t"),
+				"README.md":       file("no"),
+				"a/testdata/x.go": file("no"),
+				"vendor/v/v.go":   file("no"),
+				".cache/c.go":     file("no"),
+				"_old/o.go":       file("no"),
+			},
+			want: []string{"a/a_linux.go=a", "a/a_test.go=t", "b/b.go=b"},
+		},
+		{
+			name:     "a visit error stops the walk",
+			tree:     fstest.MapFS{"a.go": file("a"), "b.go": file("b")},
+			visitErr: errStop,
+			want:     []string{"a.go=a"},
+			wantErr:  errStop,
+		},
+		{name: "an unreadable tree is reported", tree: errFS{}, wantErr: errBroken},
+		{name: "an empty tree visits nothing", tree: fstest.MapFS{}},
 	}
 
-	var got []string
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	err := srcwalk.Files(tree, func(name string, src []byte) error {
-		got = append(got, name+"="+string(src))
+			var got []string
 
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("Files() error = %v", err)
-	}
+			err := srcwalk.Files(tt.tree, func(name string, src []byte) error {
+				got = append(got, name+"="+string(src))
 
-	want := []string{"a/a_linux.go=a", "a/a_test.go=t", "b/b.go=b"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("Files() visited %v, want %v", got, want)
+				return tt.visitErr
+			})
+			if !errors.Is(err, tt.wantErr) || !slices.Equal(got, tt.want) {
+				t.Fatalf("Files() visited %v, error %v, want %v, error %v", got, err, tt.want, tt.wantErr)
+			}
+		})
 	}
 }
 
-func TestFilesStopsOnVisitError(t *testing.T) {
+func TestSkips(t *testing.T) {
 	t.Parallel()
 
-	errStop := errors.New("stop")
-	tree := fstest.MapFS{"a.go": file("a"), "b.go": file("b")}
-	visits := 0
-
-	err := srcwalk.Files(tree, func(string, []byte) error {
-		visits++
-
-		return errStop
-	})
-	if !errors.Is(err, errStop) || visits != 1 {
-		t.Fatalf("Files() = %v after %d visits, want the visit error after 1", err, visits)
+	tests := map[string]bool{
+		".": false, "internal": false, "cmd": false,
+		"testdata": true, "vendor": true, ".git": true, "_old": true,
 	}
-}
 
-func TestFilesReportsMissingRoot(t *testing.T) {
-	t.Parallel()
+	for dir, want := range tests {
+		t.Run(dir, func(t *testing.T) {
+			t.Parallel()
 
-	err := srcwalk.Files(errFS{}, func(string, []byte) error { return nil })
-	if !errors.Is(err, errBroken) {
-		t.Fatalf("Files() error = %v, want the open failure", err)
+			if got := srcwalk.Skips(dir); got != want {
+				t.Fatalf("Skips(%q) = %v, want %v", dir, got, want)
+			}
+		})
 	}
 }

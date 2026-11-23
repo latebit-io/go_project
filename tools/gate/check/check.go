@@ -45,6 +45,7 @@ func steps() []step {
 		{name: "tests-changed", title: "Tests changed", run: testsChanged},
 		{name: "arch", title: "Architecture", run: architecture},
 		{name: "clean", title: "Cleanup", run: cleanup},
+		{name: "tables", title: "Table-driven tests", run: tableTests},
 		{name: "format", title: "Format", run: formatting},
 		{name: "lint", title: "Lint", run: lint},
 		{name: "cross", title: "Cross-platform build", run: crossBuild},

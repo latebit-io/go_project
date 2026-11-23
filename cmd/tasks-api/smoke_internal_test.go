@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -12,8 +13,11 @@ import (
 	"testing"
 )
 
-// smokeEnv makes the test binary behave as the command itself.
-const smokeEnv = "TASKS_API_SMOKE"
+const (
+	// smokeEnv makes the test binary behave as the command itself.
+	smokeEnv  = "TASKS_API_SMOKE"
+	tasksPath = "/tasks"
+)
 
 // TestMain lets TestSmoke start the command as a real process without a
 // separate build: with smokeEnv set, this binary runs main and nothing else.
@@ -32,42 +36,59 @@ type started struct {
 	Addr string `json:"addr"`
 }
 
-type task struct {
-	ID   string `json:"id"`
-	Done bool   `json:"done"`
+// step is one request to the running command and what must come back. In
+// path, {id} stands for the task created earlier in the same scenario.
+type step struct {
+	method   string
+	path     string
+	body     string
+	want     int
+	contains string
 }
 
-type request struct {
-	method string
-	url    string
-	body   string
-}
-
-// call sends one request to the running command and decodes the JSON answer.
-func call(t *testing.T, r request, into any) int {
+// send performs the step and returns the response body.
+func send(t *testing.T, base string, s step) string {
 	t.Helper()
 
-	req, err := http.NewRequestWithContext(t.Context(), r.method, r.url, strings.NewReader(r.body))
+	req, err := http.NewRequestWithContext(t.Context(), s.method, base+s.path, strings.NewReader(s.body))
 	if err != nil {
-		t.Fatalf("build %s %s: %v", r.method, r.url, err)
+		t.Fatalf("build %s %s: %v", s.method, s.path, err)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("%s %s: %v", r.method, r.url, err)
+		t.Fatalf("%s %s: %v", s.method, s.path, err)
 	}
 
 	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			t.Errorf("close response: %v", err)
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			t.Errorf("close response: %v", closeErr)
 		}
 	}()
 
-	if err := json.NewDecoder(resp.Body).Decode(into); err != nil {
-		t.Fatalf("decode %s %s: %v", r.method, r.url, err)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read %s %s: %v", s.method, s.path, err)
 	}
 
-	return resp.StatusCode
+	if resp.StatusCode != s.want || !strings.Contains(string(body), s.contains) {
+		t.Fatalf("%s %s = %d %s, want %d containing %q", s.method, s.path, resp.StatusCode, body, s.want, s.contains)
+	}
+
+	return string(body)
+}
+
+// createdID returns the id in a task response, or "" for any other body.
+func createdID(body string) string {
+	var created struct {
+		ID string `json:"id"`
+	}
+
+	if err := json.Unmarshal([]byte(body), &created); err != nil {
+		return ""
+	}
+
+	return created.ID
 }
 
 // command is the process under test and the address it logged.
@@ -125,33 +146,11 @@ func launch(t *testing.T) command {
 	return command{proc: cmd, addr: first.Addr}
 }
 
-// TestSmoke proves the built command works: it starts, serves real HTTP,
-// keeps a task between requests and exits cleanly when interrupted.
-func TestSmoke(t *testing.T) {
-	t.Parallel()
+// stop interrupts the command and requires a clean exit. Windows cannot
+// deliver an interrupt to another process, so there the cleanup just ends it.
+func stop(t *testing.T, running command) {
+	t.Helper()
 
-	running := launch(t)
-	tasks := "http://" + running.addr + "/tasks"
-
-	var created, completed task
-	if code := call(t, request{http.MethodPost, tasks, `{"title":"smoke"}`}, &created); code != http.StatusCreated {
-		t.Fatalf("POST /tasks status = %d, want 201", code)
-	}
-
-	complete := request{method: http.MethodPost, url: tasks + "/" + created.ID + "/complete"}
-	if code := call(t, complete, &completed); code != http.StatusOK {
-		t.Fatalf("complete status = %d, want 200", code)
-	}
-
-	var listed []task
-
-	code := call(t, request{method: http.MethodGet, url: tasks}, &listed)
-	if code != http.StatusOK || len(listed) != 1 || !listed[0].Done {
-		t.Fatalf("GET /tasks = %d %+v, want the one completed task", code, listed)
-	}
-
-	// Windows cannot deliver an interrupt to another process, so only the
-	// other platforms prove the graceful path; there the test just ends it.
 	if runtime.GOOS == "windows" {
 		return
 	}
@@ -162,5 +161,51 @@ func TestSmoke(t *testing.T) {
 
 	if err := running.proc.Wait(); err != nil {
 		t.Fatalf("command exit after interrupt = %v, want a clean shutdown", err)
+	}
+}
+
+// TestSmoke proves the built command works: it starts, serves real HTTP,
+// keeps state between requests and exits cleanly when interrupted.
+func TestSmoke(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		steps []step
+	}{
+		{
+			name: "a task survives between requests",
+			steps: []step{
+				{http.MethodPost, tasksPath, `{"title":"smoke"}`, http.StatusCreated, `"done":false`},
+				{http.MethodPost, tasksPath + "/{id}/complete", "", http.StatusOK, `"done":true`},
+				{http.MethodGet, tasksPath, "", http.StatusOK, `"done":true`},
+			},
+		},
+		{
+			name: "bad input is refused and the command keeps serving",
+			steps: []step{
+				{http.MethodPost, tasksPath, `{"title":" "}`, http.StatusUnprocessableEntity, `"error"`},
+				{http.MethodGet, tasksPath, "", http.StatusOK, "[]"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			running := launch(t)
+			id := ""
+
+			for _, s := range tt.steps {
+				s.path = strings.ReplaceAll(s.path, "{id}", id)
+
+				if created := createdID(send(t, "http://"+running.addr, s)); created != "" {
+					id = created
+				}
+			}
+
+			stop(t, running)
+		})
 	}
 }

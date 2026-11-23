@@ -78,8 +78,12 @@ func TestNeedsTest(t *testing.T) {
 	}
 
 	for branch, want := range tests {
-		if got := conv.NeedsTest(branch); got != want {
-			t.Errorf("NeedsTest(%q) = %v, want %v", branch, got, want)
-		}
+		t.Run(branch, func(t *testing.T) {
+			t.Parallel()
+
+			if got := conv.NeedsTest(branch); got != want {
+				t.Fatalf("NeedsTest(%q) = %v, want %v", branch, got, want)
+			}
+		})
 	}
 }

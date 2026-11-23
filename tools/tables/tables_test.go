@@ -1,0 +1,108 @@
+package tables_test
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/latebit-io/go_project/tools/tables"
+)
+
+const (
+	header    = "package x\n\nimport \"testing\"\n\n"
+	notDriven = "x_test.go:5: TestAdd is not table-driven"
+)
+
+func TestCheck(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		file string
+		src  string
+		want string
+	}{
+		{
+			name: "table with subtests",
+			src: `func TestAdd(t *testing.T) {
+	for _, tt := range []struct{ name string }{{"a"}} {
+		t.Run(tt.name, func(t *testing.T) {})
+	}
+}`,
+		},
+		{
+			name: "map of cases",
+			src: `func TestAdd(t *testing.T) {
+	for name := range map[string]int{"a": 1} {
+		t.Run(name, func(t *testing.T) {})
+	}
+}`,
+		},
+		{
+			name: "single scenario",
+			src:  "func TestAdd(t *testing.T) {\n\tif 1+1 != 2 {\n\t\tt.Fatal(\"math\")\n\t}\n}",
+			want: notDriven,
+		},
+		{
+			name: "loop without subtests",
+			src:  "func TestAdd(t *testing.T) {\n\tfor _, n := range []int{1} {\n\t\t_ = n\n\t}\n}",
+			want: notDriven,
+		},
+		{
+			name: "subtest without a loop",
+			src:  "func TestAdd(t *testing.T) {\n\tt.Run(\"a\", func(t *testing.T) {})\n}",
+			want: notDriven,
+		},
+		{
+			name: "TestMain has no cases",
+			src:  "func TestMain(m *testing.M) {\n\tm.Run()\n}",
+		},
+		{
+			name: "helpers and methods are not tests",
+			src:  "type suite struct{}\n\nfunc (suite) TestAdd(t *testing.T) {}\n\nfunc helper(t *testing.T) {}",
+		},
+		{
+			name: "production file",
+			file: "x.go",
+			src:  "func TestAdd(t *testing.T) {}",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			file := tt.file
+			if file == "" {
+				file = "x_test.go"
+			}
+
+			found, err := tables.Check(file, []byte(header+tt.src+"\n"))
+			if err != nil {
+				t.Fatalf("Check() error = %v", err)
+			}
+
+			var got string
+			if len(found) > 0 {
+				got = found[0].String()
+			}
+
+			if !strings.HasPrefix(got, tt.want) || (tt.want == "" && got != "") {
+				t.Fatalf("Check() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckRejectsBrokenSource(t *testing.T) {
+	t.Parallel()
+
+	for _, src := range []string{"package", "package x\n\nfunc TestAdd("} {
+		t.Run(src, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := tables.Check("x_test.go", []byte(src)); err == nil {
+				t.Fatal("Check() error = nil, want a parse error")
+			}
+		})
+	}
+}

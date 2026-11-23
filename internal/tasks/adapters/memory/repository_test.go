@@ -12,109 +12,163 @@ import (
 	"github.com/latebit-io/go_project/internal/tasks/domain"
 )
 
+var errRefused = errors.New("refused")
+
 func at(hour int) time.Time {
 	return time.Date(2026, time.January, 2, hour, 0, 0, 0, time.UTC)
 }
 
-func newTask(t *testing.T, id domain.ID, created time.Time) *domain.Task {
+// saved is a task to store: its ID and the hour it was created.
+type saved struct {
+	id   domain.ID
+	hour int
+}
+
+// repository returns a repository holding the tasks, saved in the given order.
+func repository(t *testing.T, tasks ...saved) *memory.Repository {
 	t.Helper()
-
-	task, err := domain.New(id, "task "+string(id), created)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	return task
-}
-
-func ids(tasks []*domain.Task) string {
-	var joined strings.Builder
-	for _, task := range tasks {
-		joined.WriteString(string(task.ID()))
-	}
-
-	return joined.String()
-}
-
-func TestListIsOldestFirst(t *testing.T) {
-	t.Parallel()
 
 	repo := memory.NewRepository()
 
-	// Saved out of creation order; b and c share an instant and keep their save order.
-	saved := []*domain.Task{
-		newTask(t, "d", at(12)), newTask(t, "b", at(10)), newTask(t, "c", at(10)), newTask(t, "a", at(9)),
-	}
-	for _, task := range saved {
+	for _, each := range tasks {
+		task, err := domain.New(each.id, "task "+string(each.id), at(each.hour))
+		if err != nil {
+			t.Fatalf("New(%s) error = %v", each.id, err)
+		}
+
 		if err := repo.Save(t.Context(), task); err != nil {
-			t.Fatalf("Save(%s) error = %v", task.ID(), err)
+			t.Fatalf("Save(%s) error = %v", each.id, err)
 		}
 	}
 
-	// Saving a known task again replaces it and adds nothing.
-	if err := repo.Save(t.Context(), newTask(t, "a", at(9))); err != nil {
-		t.Fatalf("Save(a) again error = %v", err)
-	}
-
-	tasks, err := repo.List(t.Context())
-	if err != nil || ids(tasks) != "abcd" {
-		t.Fatalf("List() = %s, %v, want abcd", ids(tasks), err)
-	}
+	return repo
 }
 
-func TestUpdateUnknown(t *testing.T) {
+func complete(task *domain.Task) error { return task.Complete(at(10)) }
+
+func TestList(t *testing.T) {
 	t.Parallel()
 
-	_, err := memory.NewRepository().Update(t.Context(), "missing", func(*domain.Task) error { return nil })
-	if !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("Update() error = %v, want %v", err, domain.ErrNotFound)
+	tests := []struct {
+		name  string
+		saves []saved
+		want  string
+	}{
+		{name: "empty"},
+		{name: "oldest first, whatever the save order", saves: []saved{{"c", 12}, {"a", 9}, {"b", 10}}, want: "abc"},
+		{name: "the same instant keeps the save order", saves: []saved{{"y", 10}, {"x", 10}}, want: "yx"},
+		{name: "saving again replaces and adds nothing", saves: []saved{{"a", 9}, {"b", 10}, {"a", 9}}, want: "ab"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tasks, err := repository(t, tt.saves...).List(t.Context())
+			if err != nil {
+				t.Fatalf("List() error = %v", err)
+			}
+
+			var got strings.Builder
+			for _, task := range tasks {
+				got.WriteString(string(task.ID()))
+			}
+
+			if got.String() != tt.want {
+				t.Fatalf("List() = %s, want %s", got.String(), tt.want)
+			}
+		})
 	}
 }
 
+func TestUpdate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		id       domain.ID
+		change   func(*domain.Task) error
+		wantErr  error
+		wantDone bool
+	}{
+		{name: "stores the change", id: "a", change: complete, wantDone: true},
+		{name: "unknown task", id: "missing", change: complete, wantErr: domain.ErrNotFound},
+		{
+			name: "a failed change is discarded", id: "a", wantErr: errRefused,
+			change: func(task *domain.Task) error { return errors.Join(complete(task), errRefused) },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := repository(t, saved{"a", 9})
+
+			if _, err := repo.Update(t.Context(), tt.id, tt.change); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Update() error = %v, want %v", err, tt.wantErr)
+			}
+
+			stored, err := repo.List(t.Context())
+			if err != nil || stored[0].Done() != tt.wantDone {
+				t.Fatalf("stored task = %+v, %v, want done = %v", stored, err, tt.wantDone)
+			}
+		})
+	}
+}
+
+// What a caller holds is a copy: changing it must not reach the stored task.
 func TestStoredTaskIsIsolatedFromCallers(t *testing.T) {
 	t.Parallel()
 
-	repo := memory.NewRepository()
-	task := newTask(t, "a", at(9))
+	tests := []struct {
+		name string
+		// held returns a task the caller got from, or gave to, the repository.
+		held func(t *testing.T, repo *memory.Repository) *domain.Task
+	}{
+		{
+			name: "a task read back by List",
+			held: func(t *testing.T, repo *memory.Repository) *domain.Task {
+				t.Helper()
 
-	if err := repo.Save(t.Context(), task); err != nil {
-		t.Fatalf("Save() error = %v", err)
+				tasks, err := repo.List(t.Context())
+				if err != nil {
+					t.Fatalf("List() error = %v", err)
+				}
+
+				return tasks[0]
+			},
+		},
+		{
+			name: "a task returned by Update",
+			held: func(t *testing.T, repo *memory.Repository) *domain.Task {
+				t.Helper()
+
+				task, err := repo.Update(t.Context(), "a", func(*domain.Task) error { return nil })
+				if err != nil {
+					t.Fatalf("Update() error = %v", err)
+				}
+
+				return task
+			},
+		},
 	}
 
-	if err := task.Complete(at(10)); err != nil {
-		t.Fatalf("Complete() error = %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	stored, err := repo.List(t.Context())
-	if err != nil || stored[0].Done() {
-		t.Fatalf("List() = %+v, %v, want the stored task still open", stored, err)
-	}
-}
+			repo := repository(t, saved{"a", 9})
 
-func TestUpdateKeepsNothingWhenTheChangeFails(t *testing.T) {
-	t.Parallel()
+			if err := complete(tt.held(t, repo)); err != nil {
+				t.Fatalf("Complete() error = %v", err)
+			}
 
-	repo := memory.NewRepository()
-	if err := repo.Save(t.Context(), newTask(t, "a", at(9))); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-
-	errRefused := errors.New("refused")
-
-	_, err := repo.Update(t.Context(), "a", func(task *domain.Task) error {
-		if err := task.Complete(at(10)); err != nil {
-			return err
-		}
-
-		return errRefused
-	})
-	if !errors.Is(err, errRefused) {
-		t.Fatalf("Update() error = %v, want the change's error", err)
-	}
-
-	stored, err := repo.List(t.Context())
-	if err != nil || stored[0].Done() {
-		t.Fatalf("List() = %+v, %v, want the failed change discarded", stored, err)
+			stored, err := repo.List(t.Context())
+			if err != nil || stored[0].Done() {
+				t.Fatalf("stored task = %+v, %v, want it still open", stored, err)
+			}
+		})
 	}
 }
 
@@ -122,28 +176,30 @@ func TestUpdateKeepsNothingWhenTheChangeFails(t *testing.T) {
 func TestConcurrentUpdatesRunOneAtATime(t *testing.T) {
 	t.Parallel()
 
-	repo := memory.NewRepository()
-	if err := repo.Save(t.Context(), newTask(t, "a", at(9))); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
+	for _, workers := range []int{2, 50} {
+		t.Run(time.Duration(workers).String(), func(t *testing.T) {
+			t.Parallel()
 
-	var (
-		group     sync.WaitGroup
-		completed atomic.Int32
-	)
+			repo := repository(t, saved{"a", 9})
 
-	for range 50 {
-		group.Go(func() {
-			_, err := repo.Update(t.Context(), "a", func(task *domain.Task) error { return task.Complete(at(10)) })
-			if err == nil {
-				completed.Add(1)
+			var (
+				group     sync.WaitGroup
+				completed atomic.Int32
+			)
+
+			for range workers {
+				group.Go(func() {
+					if _, err := repo.Update(t.Context(), "a", complete); err == nil {
+						completed.Add(1)
+					}
+				})
+			}
+
+			group.Wait()
+
+			if got := completed.Load(); got != 1 {
+				t.Fatalf("%d of %d concurrent completions succeeded, want exactly 1", got, workers)
 			}
 		})
-	}
-
-	group.Wait()
-
-	if got := completed.Load(); got != 1 {
-		t.Fatalf("%d of 50 concurrent completions succeeded, want exactly 1", got)
 	}
 }

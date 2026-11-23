@@ -2,7 +2,6 @@ package rest_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -17,18 +16,15 @@ import (
 	"github.com/latebit-io/go_project/internal/tasks/domain"
 )
 
-const tasksPath = "/tasks"
-
-type taskBody struct {
-	ID          string     `json:"id"`
-	Title       string     `json:"title"`
-	Done        bool       `json:"done"`
-	CompletedAt *time.Time `json:"completedAt"`
-}
-
-type brokenRepository struct{}
+const (
+	tasksPath    = "/tasks"
+	completePath = "/tasks/t1/complete"
+	failed       = http.StatusInternalServerError
+)
 
 var errBroken = errors.New("disk on fire")
+
+type brokenRepository struct{}
 
 func (brokenRepository) Save(context.Context, *domain.Task) error { return errBroken }
 
@@ -38,6 +34,26 @@ func (brokenRepository) Update(context.Context, domain.ID, func(*domain.Task) er
 
 func (brokenRepository) List(context.Context) ([]*domain.Task, error) { return nil, errBroken }
 
+// step is one request and what the response must look like.
+type step struct {
+	method string
+	target string
+	body   string
+	want   int
+	// contains must be in the response body; lacks must not be.
+	contains string
+	lacks    string
+}
+
+// post is a POST whose response must have the status and contain the text.
+func post(target, body string, want int, contains string) step {
+	return step{method: http.MethodPost, target: target, body: body, want: want, contains: contains}
+}
+
+func list(want int, contains string) step {
+	return step{method: http.MethodGet, target: tasksPath, want: want, contains: contains}
+}
+
 func newHandler(repo domain.Repository) http.Handler {
 	now := func() time.Time { return time.Date(2026, time.January, 2, 9, 0, 0, 0, time.UTC) }
 	service := app.NewService(repo, now, func() domain.ID { return "t1" })
@@ -45,102 +61,39 @@ func newHandler(repo domain.Repository) http.Handler {
 	return rest.NewHandler(service, slog.New(slog.DiscardHandler))
 }
 
-type request struct {
-	method string
-	target string
-	body   string
-}
-
-func post(target, body string) request {
-	return request{method: http.MethodPost, target: target, body: body}
-}
-
-func list() request {
-	return request{method: http.MethodGet, target: tasksPath}
-}
-
-func call(t *testing.T, handler http.Handler, req request) *httptest.ResponseRecorder {
-	t.Helper()
-
-	rec := httptest.NewRecorder()
-	body := strings.NewReader(req.body)
-	handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), req.method, req.target, body))
-
-	return rec
-}
-
-// decode fails the test unless rec has the wanted status, then reads its body.
-func decode(t *testing.T, rec *httptest.ResponseRecorder, want int, into any) {
-	t.Helper()
-
-	if rec.Code != want {
-		t.Fatalf("status = %d, want %d (%s)", rec.Code, want, rec.Body.String())
-	}
-
-	if err := json.NewDecoder(rec.Body).Decode(into); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-}
-
-func TestTaskLifecycle(t *testing.T) {
-	t.Parallel()
-
-	handler := newHandler(memory.NewRepository())
-
-	var added, completed taskBody
-
-	decode(t, call(t, handler, post(tasksPath, `{"title":" write docs "}`)), http.StatusCreated, &added)
-
-	if added.ID != "t1" || added.Title != "write docs" || added.Done {
-		t.Fatalf("added = %+v, want open task t1 titled write docs", added)
-	}
-
-	decode(t, call(t, handler, post("/tasks/t1/complete", "")), http.StatusOK, &completed)
-
-	if !completed.Done || completed.CompletedAt == nil {
-		t.Fatalf("completed = %+v, want a done task with a completion time", completed)
-	}
-
-	var listed []taskBody
-
-	decode(t, call(t, handler, list()), http.StatusOK, &listed)
-
-	if len(listed) != 1 || !listed[0].Done {
-		t.Fatalf("listed = %+v, want one done task", listed)
-	}
-}
-
-func TestEmptyListIsAnArray(t *testing.T) {
-	t.Parallel()
-
-	rec := call(t, newHandler(memory.NewRepository()), list())
-	if got := strings.TrimSpace(rec.Body.String()); got != "[]" {
-		t.Fatalf("GET /tasks body = %s, want []", got)
-	}
-}
-
-func TestErrorsMapToStatus(t *testing.T) {
+func TestHandler(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name string
+		// repo defaults to an empty in-memory repository.
 		repo domain.Repository
-		req  request
-		want int
+		// steps run in order against one handler.
+		steps []step
 	}{
-		{name: "malformed body", req: post(tasksPath, `{`), want: http.StatusBadRequest},
-		{name: "unknown field", req: post(tasksPath, `{"name":"x"}`), want: http.StatusBadRequest},
-		{name: "data after the object", req: post(tasksPath, `{"title":"x"} junk`), want: http.StatusBadRequest},
-		{name: "second object", req: post(tasksPath, `{"title":"x"}{"title":"y"}`), want: http.StatusBadRequest},
-		{name: "blank title", req: post(tasksPath, `{"title":" "}`), want: http.StatusUnprocessableEntity},
-		{name: "unknown task", req: post("/tasks/nope/complete", ""), want: http.StatusNotFound},
+		{
+			name: "a task is added, completed once and listed",
+			steps: []step{
+				post(tasksPath, `{"title":" write docs "}`, http.StatusCreated, `"title":"write docs","done":false`),
+				post(completePath, "", http.StatusOK, `"done":true`),
+				post(completePath, "", http.StatusConflict, ""),
+				list(http.StatusOK, `"completedAt"`),
+			},
+		},
+		{name: "an empty list is an array", steps: []step{list(http.StatusOK, "[]")}},
+		{name: "malformed body", steps: []step{post(tasksPath, `{`, http.StatusBadRequest, "")}},
+		{name: "unknown field", steps: []step{post(tasksPath, `{"name":"x"}`, http.StatusBadRequest, "")}},
+		{name: "data after the object", steps: []step{post(tasksPath, `{"title":"x"} junk`, http.StatusBadRequest, "")}},
+		{name: "second object", steps: []step{post(tasksPath, `{"title":"x"}{"title":"y"}`, http.StatusBadRequest, "")}},
+		{name: "blank title", steps: []step{post(tasksPath, `{"title":" "}`, http.StatusUnprocessableEntity, "")}},
+		{name: "unknown task", steps: []step{post("/tasks/nope/complete", "", http.StatusNotFound, "")}},
 		{
 			name: "storage failure on add", repo: brokenRepository{},
-			req: post(tasksPath, `{"title":"x"}`), want: http.StatusInternalServerError,
+			steps: []step{post(tasksPath, `{"title":"x"}`, failed, "")},
 		},
 		{
-			name: "storage failure on list", repo: brokenRepository{},
-			req: list(), want: http.StatusInternalServerError,
+			name: "internal errors stay out of the response", repo: brokenRepository{},
+			steps: []step{{method: http.MethodGet, target: tasksPath, want: failed, lacks: errBroken.Error()}},
 		},
 	}
 
@@ -153,30 +106,20 @@ func TestErrorsMapToStatus(t *testing.T) {
 				repo = memory.NewRepository()
 			}
 
-			if rec := call(t, newHandler(repo), tt.req); rec.Code != tt.want {
-				t.Fatalf("status = %d, want %d (%s)", rec.Code, tt.want, rec.Body.String())
+			handler := newHandler(repo)
+
+			for _, s := range tt.steps {
+				rec := httptest.NewRecorder()
+				req := httptest.NewRequestWithContext(t.Context(), s.method, s.target, strings.NewReader(s.body))
+				handler.ServeHTTP(rec, req)
+
+				got := rec.Body.String()
+				leaked := s.lacks != "" && strings.Contains(got, s.lacks)
+
+				if rec.Code != s.want || !strings.Contains(got, s.contains) || leaked {
+					t.Fatalf("%s %s = %d %s, want %+v", s.method, s.target, rec.Code, got, s)
+				}
 			}
 		})
-	}
-}
-
-func TestCompletingTwiceConflicts(t *testing.T) {
-	t.Parallel()
-
-	handler := newHandler(memory.NewRepository())
-	call(t, handler, post(tasksPath, `{"title":"write docs"}`))
-	call(t, handler, post("/tasks/t1/complete", ""))
-
-	if rec := call(t, handler, post("/tasks/t1/complete", "")); rec.Code != http.StatusConflict {
-		t.Fatalf("second complete status = %d, want %d", rec.Code, http.StatusConflict)
-	}
-}
-
-func TestInternalErrorsStayOutOfTheResponse(t *testing.T) {
-	t.Parallel()
-
-	rec := call(t, newHandler(brokenRepository{}), list())
-	if strings.Contains(rec.Body.String(), errBroken.Error()) {
-		t.Fatalf("response leaks the internal error: %s", rec.Body.String())
 	}
 }

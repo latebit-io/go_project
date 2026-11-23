@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "go run -C \"${CLAUDE_PROJECT_DIR}\" ./tools/gate agent claude-stop",
+            "command": "go -C \"${CLAUDE_PROJECT_DIR}\" tool gate agent claude-stop",
             "timeout": 600,
             "statusMessage": "Checking the work tree..."
           }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "go run -C \"${CLAUDE_PROJECT_DIR}\" ./tools/gate agent claude-prompt",
+            "command": "go -C \"${CLAUDE_PROJECT_DIR}\" tool gate agent claude-prompt",
             "timeout": 60
           }
         ]

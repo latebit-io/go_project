@@ -18,6 +18,16 @@ const (
 	stepSmoke = "smoke"
 )
 
+// smokeTest is a table-driven smoke test, as the gate requires of every test.
+const smokeTest = `package main
+
+func TestSmoke(t *testing.T) {
+	for _, name := range []string{"starts"} {
+		t.Run(name, func(t *testing.T) {})
+	}
+}
+`
+
 var errTool = errors.New("exit status 1")
 
 func file(content string) *fstest.MapFile {
@@ -31,7 +41,7 @@ func cleanTree() fstest.MapFS {
 		".golangci-lint-version":   file("v2.15.0\n"),
 		"coverage.out":             file("mode: atomic\nexample.com/shop/internal/a/a.go:1.1,2.2 10 1\n"),
 		"cmd/api/main.go":          file("// Command api serves.\npackage main\n"),
-		"cmd/api/smoke_test.go":    file("package main\n\nfunc TestSmoke(t *testing.T) {}\n"),
+		"cmd/api/smoke_test.go":    file(smokeTest),
 		"cmd/README.md":            file("not a command"),
 		"internal/platform/x/x.go": file("// Package x is clean.\npackage x\n"),
 	}
@@ -70,49 +80,54 @@ func run(t *testing.T, tree fstest.MapFS, answers map[string]proctest.Answer, st
 	return outcome{out: out.String(), calls: fake.Calls(), err: err}
 }
 
-func TestRunPassesEveryStepInOrder(t *testing.T) {
+func TestRun(t *testing.T) {
 	t.Parallel()
 
-	got := run(t, cleanTree(), cleanAnswers())
-	if got.err != nil {
-		t.Fatalf("Run() = %v\n%s", got.err, got.out)
+	tests := []struct {
+		name  string
+		steps []string
+		// wantSteps is how many step headers the output must show.
+		wantSteps int
+		wantEnd   string
+		// wantCalls must all have run; noCalls means no tool may start at all.
+		wantCalls []string
+		noCalls   bool
+		wantErr   error
+	}{
+		{
+			name: "the whole gate", wantSteps: len(check.Names()), wantEnd: "PASS: all checks\n",
+			wantCalls: []string{
+				"go mod tidy -diff", "golangci-lint fmt --diff", "golangci-lint run",
+				"GOOS=windows GOARCH=amd64 go vet ./...",
+				"go test -shuffle=on -count=1 -coverprofile=coverage.out ./... -race",
+				"go build -o bin/ ./cmd/...",
+			},
+		},
+		{
+			name: "only the named steps, and the pass line says so", steps: []string{"arch", "clean"},
+			wantSteps: 2, wantEnd: "PASS: arch clean only\n", noCalls: true,
+		},
+		{name: "an unknown step", steps: []string{"nope"}, noCalls: true, wantErr: check.ErrFailed},
 	}
 
-	out, calls := got.out, got.calls
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	if ran := strings.Count(out, "\n==> "); ran != len(check.Names()) {
-		t.Errorf("Run() ran %d steps, want all %d", ran, len(check.Names()))
-	}
+			got := run(t, cleanTree(), cleanAnswers(), tt.steps...)
+			ran := strings.Join(got.calls, "\n")
 
-	if !strings.HasSuffix(out, "PASS: all checks\n") {
-		t.Errorf("Run() output ends %q, want the pass line", out[max(0, len(out)-40):])
-	}
+			for _, want := range tt.wantCalls {
+				if !strings.Contains(ran, want) {
+					t.Errorf("Run() never ran %q", want)
+				}
+			}
 
-	joined := strings.Join(calls, "\n")
-	for _, want := range []string{
-		"go mod tidy -diff", "golangci-lint fmt --diff", "golangci-lint run",
-		"GOOS=windows GOARCH=amd64 go vet ./...",
-		"go test -shuffle=on -count=1 -coverprofile=coverage.out ./... -race",
-		"go build -o bin/ ./cmd/...",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("Run() never ran %q", want)
-		}
-	}
-}
-
-func TestRunSelectsSteps(t *testing.T) {
-	t.Parallel()
-
-	got := run(t, cleanTree(), cleanAnswers(), "arch", "clean")
-	partial := strings.HasSuffix(got.out, "PASS: arch clean only\n") && !strings.Contains(got.out, "Lint")
-
-	if got.err != nil || len(got.calls) != 0 || !partial {
-		t.Fatalf("Run(arch, clean) = %+v, want only the two in-process steps and a partial pass line", got)
-	}
-
-	if got := run(t, cleanTree(), cleanAnswers(), "nope"); !errors.Is(got.err, check.ErrFailed) {
-		t.Fatalf("Run(nope) = %v, want an unknown-step failure", got.err)
+			shape := strings.Count(got.out, "\n==> ") == tt.wantSteps && strings.HasSuffix(got.out, tt.wantEnd)
+			if !errors.Is(got.err, tt.wantErr) || !shape || (tt.noCalls && len(got.calls) > 0) {
+				t.Fatalf("Run(%v) = %+v, want %+v", tt.steps, got, tt)
+			}
+		})
 	}
 }
 
@@ -185,6 +200,12 @@ func TestStepsFail(t *testing.T) {
 			name: "narrating comment", step: "clean", want: "1 cleanup finding(s)",
 			change: func(tree fstest.MapFS, _ map[string]proctest.Answer) {
 				tree["internal/platform/x/x.go"] = file("package x\n\n// Loop through the items\n")
+			},
+		},
+		{
+			name: "test without a table", step: "tables", want: "1 test(s) are not table-driven",
+			change: func(tree fstest.MapFS, _ map[string]proctest.Answer) {
+				tree["internal/platform/x/x_test.go"] = file("package x\n\nfunc TestX(t *testing.T) {}\n")
 			},
 		},
 		{

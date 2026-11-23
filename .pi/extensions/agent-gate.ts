@@ -1,4 +1,4 @@
-// Pi adapter for the gate's agent step (go run ./tools/gate agent): what
+// Pi adapter for the gate's agent step (go tool gate agent): what
 // Claude Code gets from its hooks. Pi loads it once the project is trusted.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -9,7 +9,7 @@ export default function (pi: ExtensionAPI) {
 	// in a row, so a step that cannot run does not loop.
 	let lastSent = "";
 
-	const gate = (mode: string) => pi.exec("go", ["run", "./tools/gate", "agent", mode], { timeout: GATE_TIMEOUT_MS });
+	const gate = (mode: string) => pi.exec("go", ["tool", "gate", "agent", mode], { timeout: GATE_TIMEOUT_MS });
 
 	// A message typed by the user answers a pending simplify question.
 	pi.on("input", async (event) => {

@@ -1,5 +1,5 @@
 // Command gate is the project's one check, the same on a laptop, in a git
-// hook, from an agent and in CI: go run ./tools/gate. See usage.
+// hook, from an agent and in CI: go tool gate. See usage.
 package main
 
 import (
@@ -18,14 +18,14 @@ import (
 	"github.com/latebit-io/go_project/tools/gate/proc"
 )
 
-const usage = `usage: go run ./tools/gate [step...]         run the gate, or only the named steps
-       go run ./tools/gate commit-msg <file>   check a commit message (git hook)
-       go run ./tools/gate commit-msg --subject <text>
-       go run ./tools/gate agent [stop|prompt|claude-stop|claude-prompt]
-                                               the agent's task-complete step
-       go run ./tools/gate setup               enable the git hooks, check the tools
-       go run ./tools/gate init <module>       rename the module of a new project
-       go run ./tools/gate vuln                scan dependencies (needs network)
+const usage = `usage: go tool gate [step...]         run the gate, or only the named steps
+       go tool gate commit-msg <file>   check a commit message (git hook)
+       go tool gate commit-msg --subject <text>
+       go tool gate agent [stop|prompt|claude-stop|claude-prompt]
+                                        the agent's task-complete step
+       go tool gate setup               enable the git hooks, check the tools
+       go tool gate init <module>       make a copy of the template a project
+       go tool gate vuln                scan dependencies (needs network)
 steps: `
 
 // vulncheck is pinned so a laptop and CI scan with the same tool.

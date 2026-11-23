@@ -1,8 +1,10 @@
 # Architecture
 
-Rules are enforced by `tools/arch` (layout, directories, imports),
-`tools/clean` (comments, emoji) and `.golangci.yml` (code, files, package
-names). This page states them once.
+Rules are enforced by the gate (`go tool gate`) and `.golangci.yml`. The
+gate's packages are named below as `tools/...`: they live in the template
+repository, and a project made from it runs them as a pinned dependency.
+`tools/arch` covers layout, directories and imports; `tools/clean` covers
+comments and emoji. This page states the rules once.
 
 ## Layout
 
@@ -66,6 +68,9 @@ Reference slice: `internal/tasks` wired by `cmd/tasks-api`.
 - No package-level state, no `init`, no `fmt.Print*`; inject `io.Writer`, clock, logger.
 - Limits: function 50 lines, cyclomatic 10, cognitive 15, nesting 3, 4 arguments,
   3 results, interface 5 methods, file 300 lines, line 120 columns.
+- Tests are table-driven, every one: the cases are data, and a loop runs each
+  with `t.Run`. A sequence of steps is a table of scenarios whose rows list
+  the steps. `tools/tables` enforces it; only `TestMain` is exempt.
 - Tests: black-box (`<pkg>_test`; `package main` uses `_internal_test.go`),
   `t.Parallel()`, shuffled, race detector wherever cgo is available and always
   in CI. Coverage: 80% of statements outside `cmd/`, counted over the module.

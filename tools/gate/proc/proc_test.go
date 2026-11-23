@@ -8,37 +8,70 @@ import (
 	"github.com/latebit-io/go_project/tools/gate/proc"
 )
 
-func TestOutputCapturesStdoutAndEnv(t *testing.T) {
-	t.Parallel()
-
-	run := proc.Exec{Dir: t.TempDir()}
-
-	got, err := run.Output(t.Context(), []string{"GOOS=plan9"}, "go", "env", "GOOS")
-	if err != nil || strings.TrimSpace(got) != "plan9" {
-		t.Fatalf("Output() = %q, %v, want plan9", got, err)
-	}
+// invocation is one use of Exec: go started with args, streamed or captured.
+type invocation struct {
+	stream bool
+	env    []string
+	args   []string
 }
 
-func TestOutputFailureCarriesStderr(t *testing.T) {
-	t.Parallel()
+// run returns what the program printed, by either route.
+func (i invocation) run(t *testing.T) (string, error) {
+	t.Helper()
 
-	_, err := proc.Exec{Dir: t.TempDir()}.Output(t.Context(), nil, "go", "no-such-command")
-	if err == nil || !strings.Contains(err.Error(), "unknown command") {
-		t.Fatalf("Output() error = %v, want go's own message", err)
+	var streamed bytes.Buffer
+
+	exec := proc.Exec{Dir: t.TempDir(), Out: &streamed}
+	if i.stream {
+		err := exec.Stream(t.Context(), i.env, "go", i.args...)
+
+		return streamed.String(), err
 	}
+
+	return exec.Output(t.Context(), i.env, "go", i.args...)
 }
 
-func TestStreamWritesToTheUser(t *testing.T) {
+func TestExec(t *testing.T) {
 	t.Parallel()
 
-	var out bytes.Buffer
+	plan9 := []string{"GOOS=plan9"}
 
-	run := proc.Exec{Dir: t.TempDir(), Out: &out}
-	if err := run.Stream(t.Context(), nil, "go", "env", "GOARCH"); err != nil || out.Len() == 0 {
-		t.Fatalf("Stream() = %v with output %q, want the architecture printed", err, out.String())
+	tests := []struct {
+		name    string
+		call    invocation
+		want    string
+		wantErr string
+	}{
+		{name: "output is captured", call: invocation{args: []string{"env", "GOOS"}, env: plan9}, want: "plan9"},
+		{name: "output failure carries stderr", call: invocation{args: []string{"no-such"}}, wantErr: "unknown command"},
+		{
+			name: "stream writes to the user",
+			call: invocation{stream: true, args: []string{"env", "GOOS"}, env: plan9}, want: "plan9",
+		},
+		{
+			name: "stream failure is reported",
+			call: invocation{stream: true, args: []string{"no-such"}}, wantErr: "go no-such",
+		},
 	}
 
-	if err := run.Stream(t.Context(), nil, "go", "no-such-command"); err == nil {
-		t.Fatal("Stream() error = nil, want the failure")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := tt.call.run(t)
+
+			failed := ""
+			if err != nil {
+				failed = err.Error()
+			}
+
+			if !strings.Contains(failed, tt.wantErr) || (tt.wantErr == "") != (err == nil) {
+				t.Fatalf("error = %v, want one mentioning %q", err, tt.wantErr)
+			}
+
+			if tt.wantErr == "" && strings.TrimSpace(got) != tt.want {
+				t.Fatalf("got %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

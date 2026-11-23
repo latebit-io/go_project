@@ -35,7 +35,7 @@ func toolsAndHooks(ctx context.Context, env *Env) error {
 
 	// A clone without the hooks commits unchecked; CI needs no hooks.
 	if !env.inCI() && env.Repo.HooksPath(ctx) != hooksDir {
-		return failf("git hooks are off; enable them with: go run ./tools/gate setup")
+		return failf("git hooks are off; enable them with: go tool gate setup")
 	}
 
 	env.sayf("ok: golangci-lint %s, git hooks on\n", want)

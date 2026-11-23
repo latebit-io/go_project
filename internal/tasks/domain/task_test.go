@@ -48,27 +48,40 @@ func TestNew(t *testing.T) {
 	}
 }
 
-func TestCompleteHappensOnce(t *testing.T) {
+func TestComplete(t *testing.T) {
 	t.Parallel()
 
-	task, err := domain.New("t1", "write docs", at(9))
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
+	tests := []struct {
+		name string
+		// hours at which Complete is called, in order
+		completions []int
+		// error of the last call
+		wantErr    error
+		wantDoneAt int
+	}{
+		{name: "an open task completes", completions: []int{10}, wantDoneAt: 10},
+		{
+			name: "a task completes once and keeps the first time", completions: []int{10, 11},
+			wantErr: domain.ErrAlreadyDone, wantDoneAt: 10,
+		},
 	}
 
-	if err := task.Complete(at(10)); err != nil {
-		t.Fatalf("Complete() error = %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	if !task.Done() || !task.CompletedAt().Equal(at(10)) {
-		t.Fatalf("task = %+v, want done at 10", task)
-	}
+			task, err := domain.New("t1", "write docs", at(9))
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
 
-	if err := task.Complete(at(11)); !errors.Is(err, domain.ErrAlreadyDone) {
-		t.Fatalf("second Complete() error = %v, want %v", err, domain.ErrAlreadyDone)
-	}
+			for _, hour := range tt.completions {
+				err = task.Complete(at(hour))
+			}
 
-	if !task.CompletedAt().Equal(at(10)) {
-		t.Fatalf("CompletedAt() = %v, want the first completion kept", task.CompletedAt())
+			if !errors.Is(err, tt.wantErr) || !task.Done() || !task.CompletedAt().Equal(at(tt.wantDoneAt)) {
+				t.Fatalf("after %v: error = %v, task = %+v, want %+v", tt.completions, err, task, tt)
+			}
+		})
 	}
 }

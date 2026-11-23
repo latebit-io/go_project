@@ -5,17 +5,17 @@
 .PHONY: check setup init vuln fmt build
 
 check:
-	go run ./tools/gate
+	go tool gate
 
 setup:
-	go run ./tools/gate setup
+	go tool gate setup
 
 # make init MODULE=github.com/acme/shop
 init:
-	go run ./tools/gate init "$(MODULE)"
+	go tool gate init "$(MODULE)"
 
 vuln:
-	go run ./tools/gate vuln
+	go tool gate vuln
 
 fmt:
 	golangci-lint fmt

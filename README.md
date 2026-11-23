@@ -6,9 +6,17 @@ agent, on Linux, macOS and Windows.
 
 ## Use as a template
 
+Create a repository with "Use this template", then once, in your copy:
+
 ```sh
-go run ./tools/gate init github.com/acme/shop   # renames go.mod and every import
+go tool gate init github.com/acme/shop
+go tool gate setup
 ```
+
+`init` renames the module in `go.mod` and every import, deletes `tools/` (the
+gate's source and tests, which a project does not keep) and pins the gate in
+`go.mod` to a released version of this repository. From then on
+`go tool gate` runs that version, and Dependabot proposes newer ones.
 
 Then add the first bounded context under `internal/<context>/`, using the
 example as the pattern.
@@ -33,13 +41,16 @@ install on Windows. A C compiler is optional: without one, tests run without
 the race detector locally; CI always runs it.
 
 ```sh
-go run ./tools/gate setup   # enables .githooks: pre-commit and commit-msg
-go run ./tools/gate         # runs the whole gate
-go run ./tools/gate lint    # runs one step
+go tool gate setup   # enables .githooks: pre-commit and commit-msg
+go tool gate         # runs the whole gate
+go tool gate lint    # runs one step
 ```
 
 
 The `Makefile` wraps the same commands for those who have `make`.
+
+In this repository `go tool gate` builds the gate from `tools/`; in a project
+made from the template it is the pinned dependency. The command is the same.
 
 ## Gate
 
@@ -52,13 +63,14 @@ The `Makefile` wraps the same commands for those who have `make`.
 | `tests-changed` | Go changes come with a test change                   |
 | `arch`          | `tools/arch`: layout, imports, naming, build         |
 | `clean`         | `tools/clean`: comment patterns, cap, emoji          |
+| `tables`        | `tools/tables`: every test function is table-driven  |
 | `format`        | gofumpt, gci (`golangci-lint fmt` to fix)            |
 | `lint`          | `.golangci.yml`: all linters, forbidigo bans         |
 | `cross`         | `go vet` for Linux, macOS and Windows                |
 | `test`          | shuffled, race detector, 80% coverage floor          |
 | `smoke`         | every `cmd/<name>` has a `TestSmoke` and builds      |
 
-Vulnerabilities: `go run ./tools/gate vuln`, in CI and on demand (needs network).
+Vulnerabilities: `go tool gate vuln`, in CI and on demand (needs network).
 
 Rules and layout: [docs/architecture.md](docs/architecture.md).
 
@@ -83,7 +95,7 @@ Works with any coding agent. Nothing in the gate depends on one.
 |---|---|
 | Instructions | `AGENTS.md`, read natively by most agents; `CLAUDE.md` and `GEMINI.md` import it |
 | Enforcement | CI runs the gate on every push; git hooks do locally once `setup` has run, and the gate fails until it has |
-| Task-complete step | the agent runs `go run ./tools/gate agent`, as `AGENTS.md` tells it |
+| Task-complete step | the agent runs `go tool gate agent`, as `AGENTS.md` tells it |
 
 | Agent | Instructions | Task-complete step |
 |---|---|---|
@@ -94,8 +106,8 @@ Works with any coding agent. Nothing in the gate depends on one.
 | Gemini CLI | `GEMINI.md` imports `AGENTS.md` | the agent runs the step |
 
 To automate another agent, point its stop hook at
-`go run ./tools/gate agent stop` and its prompt hook at
-`go run ./tools/gate agent prompt`.
+`go tool gate agent stop` and its prompt hook at
+`go tool gate agent prompt`.
 
 The step does three things:
 

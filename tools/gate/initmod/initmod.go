@@ -1,4 +1,5 @@
-// Package initmod renames the module after "Use this template".
+// Package initmod turns a fresh copy of the template into a project: it
+// renames the module and replaces the gate's source with a pinned dependency.
 package initmod
 
 import (
@@ -22,13 +23,25 @@ import (
 // ErrModule marks a module path that cannot be used.
 var ErrModule = errors.New("module path")
 
-const fileMode = 0o644
+const (
+	// upstream is the module that publishes the gate: the template itself.
+	upstream = "github.com/latebit-io/go_project"
+	gateTool = upstream + "/tools/gate"
+	// toolsDir holds the gate's source and tests, which a project does not keep.
+	toolsDir = "tools"
+	fileMode = 0o644
+)
 
-// Rename rewrites go.mod and every Go import in the module rooted at root
-// from the current module path to next, then reformats.
+// Rename makes the module rooted at root a project called next: it rewrites
+// go.mod and every Go import, pins the gate as a tool from the template's
+// module, and removes the gate's own source.
 func Rename(ctx context.Context, root string, run proc.Runner, next string) error {
 	if !regexp.MustCompile(`^[a-z0-9.-]+(/[A-Za-z0-9._~-]+)+$`).MatchString(next) {
 		return fmt.Errorf("%w: %q does not look like github.com/acme/shop", ErrModule, next)
+	}
+
+	if next == upstream {
+		return fmt.Errorf("%w: %s is the template itself", ErrModule, next)
 	}
 
 	files, err := os.OpenRoot(root)
@@ -47,14 +60,47 @@ func rewrite(ctx context.Context, files *os.Root, run proc.Runner, next string) 
 		return fmt.Errorf("read module: %w", err)
 	}
 
-	if next == current {
-		return fmt.Errorf("%w: the module is already %s", ErrModule, current)
+	// Already renamed means an earlier run stopped part way: carry on from there.
+	if current != next {
+		err = renameModule(ctx, files, run, modules{current: current, next: next})
+		if err != nil {
+			return err
+		}
 	}
 
-	// Imports first and go.mod last: if a write fails, go.mod still names the
-	// old module, so running init again finishes the files that are left.
-	err = srcwalk.Files(files.FS(), func(name string, src []byte) error {
-		rewritten, importErr := rewriteImports(name, src, current, next)
+	// The tool line in go.mod still names the template's package. With the
+	// module renamed it is a dependency, fetched at a pinned version.
+	_, err = run.Output(ctx, nil, "go", "get", "-tool", gateTool+"@latest")
+	if err != nil {
+		return fmt.Errorf("pin the gate: %w", err)
+	}
+
+	// Last, so that a failure above leaves a gate to run init with again.
+	err = files.RemoveAll(toolsDir)
+	if err != nil {
+		return fmt.Errorf("remove gate source: %w", err)
+	}
+
+	// The new path can sort differently among the imports.
+	err = run.Stream(ctx, nil, "golangci-lint", "fmt")
+	if err != nil {
+		return fmt.Errorf("format: %w", err)
+	}
+
+	return nil
+}
+
+// modules names the module path being replaced and its replacement.
+type modules struct {
+	current string
+	next    string
+}
+
+// renameModule rewrites the imports first and go.mod last: if a write fails,
+// go.mod still names the old module and running init again finishes the rest.
+func renameModule(ctx context.Context, files *os.Root, run proc.Runner, m modules) error {
+	err := srcwalk.Files(files.FS(), func(name string, src []byte) error {
+		rewritten, importErr := rewriteImports(name, src, m.current, m.next)
 		if importErr != nil || bytes.Equal(rewritten, src) {
 			return importErr
 		}
@@ -65,15 +111,9 @@ func rewrite(ctx context.Context, files *os.Root, run proc.Runner, next string) 
 		return fmt.Errorf("rewrite imports: %w", err)
 	}
 
-	_, err = run.Output(ctx, nil, "go", "mod", "edit", "-module", next)
+	_, err = run.Output(ctx, nil, "go", "mod", "edit", "-module", m.next)
 	if err != nil {
 		return fmt.Errorf("edit go.mod: %w", err)
-	}
-
-	// The new path can sort differently among the imports.
-	err = run.Stream(ctx, nil, "golangci-lint", "fmt")
-	if err != nil {
-		return fmt.Errorf("format: %w", err)
 	}
 
 	return nil

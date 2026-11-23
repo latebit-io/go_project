@@ -36,7 +36,7 @@ jobs:
           version-file: .golangci-lint-version
           install-only: true
       # Same program as the local hook, so CI and a laptop cannot disagree.
-      - run: go run ./tools/gate
+      - run: go tool gate
 
   vuln:
     runs-on: ubuntu-latest
@@ -48,4 +48,4 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
-      - run: go run ./tools/gate vuln
+      - run: go tool gate vuln

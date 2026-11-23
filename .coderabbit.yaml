@@ -20,7 +20,7 @@ reviews:
   path_instructions:
     - path: "**/*.go"
       instructions: |
-        CI runs the gate (go run ./tools/gate), which already enforces layout,
+        CI runs the gate (go tool gate), which already enforces layout,
         import direction, naming, lint limits, comment rules, coverage and
         cross-platform builds. Do not repeat what it checks. Review what a
         pattern cannot see: wrong behaviour, races, missing edge cases, needless
@@ -51,9 +51,11 @@ reviews:
         clients, and that copies protect stored state from callers.
     - path: "**/*_test.go"
       instructions: |
-        Tests are black-box, parallel and deterministic: fixed times, no
-        sleeps. Check that each test fails without the behaviour it names and
-        that concurrency claims are tested under the race detector.
+        Tests are table-driven (the gate enforces the shape), black-box,
+        parallel and deterministic: fixed times, no sleeps. Check that each
+        row fails without the behaviour it names, that a new case is a new
+        row rather than a new function, and that concurrency claims are
+        tested under the race detector.
     - path: "{tools/**,.golangci.yml,.golangci-lint-version,.githooks/**,.github/**,.claude/**,.pi/**,.coderabbit.yaml}"
       instructions: |
         These files are the guard rails. Flag any change that loosens a rule,

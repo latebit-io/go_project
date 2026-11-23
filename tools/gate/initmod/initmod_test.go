@@ -3,6 +3,7 @@ package initmod_test
 import (
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"slices"
 	"testing"
@@ -12,7 +13,13 @@ import (
 	"github.com/latebit-io/go_project/tools/gate/proc/proctest"
 )
 
-const source = `// Package a mentions "example.com/old" in prose.
+const (
+	next   = "github.com/acme/shop"
+	edit   = "go mod edit -module " + next
+	pin    = "go get -tool github.com/latebit-io/go_project/tools/gate@latest"
+	format = "golangci-lint fmt"
+
+	source = `// Package a mentions "example.com/old" in prose.
 package a
 
 import (
@@ -25,39 +32,7 @@ import (
 const schemaID = "example.com/old/schema"
 `
 
-// module writes a small module to a scratch directory and returns its path.
-func module(t *testing.T) string {
-	t.Helper()
-
-	root := t.TempDir()
-	files := fstest.MapFS{
-		"go.mod": {Data: []byte("module example.com/old\n")},
-		"a.go":   {Data: []byte(source)},
-	}
-
-	if err := os.CopyFS(root, files); err != nil {
-		t.Fatalf("write module: %v", err)
-	}
-
-	return root
-}
-
-func TestRenameRewritesImportsOnly(t *testing.T) {
-	t.Parallel()
-
-	root := module(t)
-	fake := &proctest.Fake{}
-
-	if err := initmod.Rename(t.Context(), root, fake, "github.com/acme/shop"); err != nil {
-		t.Fatalf("Rename() error = %v", err)
-	}
-
-	got, err := fs.ReadFile(os.DirFS(root), "a.go")
-	if err != nil {
-		t.Fatalf("read a.go: %v", err)
-	}
-
-	want := `// Package a mentions "example.com/old" in prose.
+	renamed = `// Package a mentions "example.com/old" in prose.
 package a
 
 import (
@@ -69,59 +44,159 @@ import (
 // schemaID is data, not an import, and must survive the rename.
 const schemaID = "example.com/old/schema"
 `
-	if string(got) != want {
-		t.Fatalf("a.go after Rename() =\n%s\nwant\n%s", got, want)
+)
+
+var (
+	errTool = errors.New("exit status 1")
+	// errAny stands for "some error" where its identity does not matter.
+	errAny = errors.New("any error")
+)
+
+// matches reports whether err is what a case expects.
+func matches(err, want error) bool {
+	if errors.Is(want, errAny) {
+		return err != nil
 	}
 
-	calls := []string{"go mod edit -module github.com/acme/shop", "golangci-lint fmt"}
-
-	// go.mod is the fake's to edit, so it still names the old module: running
-	// again must finish cleanly, as it would after a failure part way.
-	if err := initmod.Rename(t.Context(), root, &proctest.Fake{}, "github.com/acme/shop"); err != nil {
-		t.Fatalf("second Rename() error = %v, want it to be repeatable", err)
-	}
-
-	if !slices.Equal(fake.Calls(), calls) {
-		t.Fatalf("Rename() ran %v, want %v", fake.Calls(), calls)
-	}
+	return errors.Is(err, want)
 }
 
-func TestRenameRejectsBadPaths(t *testing.T) {
-	t.Parallel()
-
-	root := module(t)
-
-	for _, next := range []string{"Bad Path", "shop", "example.com/old"} {
-		if err := initmod.Rename(t.Context(), root, &proctest.Fake{}, next); !errors.Is(err, initmod.ErrModule) {
-			t.Errorf("Rename(%q) = %v, want a module path error", next, err)
-		}
-	}
+// renameCase is one way of calling Rename and what must come of it.
+type renameCase struct {
+	name    string
+	extra   fstest.MapFS
+	answers map[string]proctest.Answer
+	next    string
+	// runs is how often Rename is called; every call must end the same way.
+	runs int
+	// wantErr is matched with errors.Is; errAny accepts any error.
+	wantErr error
+	// keepsGate is whether tools/ must still be there afterwards.
+	keepsGate bool
+	// wantSource is a.go afterwards.
+	wantSource string
+	wantCalls  []string
 }
 
-func TestRenameStopsBeforeGoModOnBrokenSource(t *testing.T) {
-	t.Parallel()
+// rename calls Rename as often as the case says and returns the last result
+// with the commands of the last call.
+func rename(t *testing.T, root string, c *renameCase) ([]string, error) {
+	t.Helper()
 
-	root := module(t)
-	if err := os.CopyFS(root, fstest.MapFS{"broken/b.go": {Data: []byte("package")}}); err != nil {
-		t.Fatalf("write broken file: %v", err)
+	var (
+		err  error
+		fake *proctest.Fake
+	)
+
+	for range c.runs {
+		fake = &proctest.Fake{Answers: c.answers}
+		err = initmod.Rename(t.Context(), root, fake, c.next)
 	}
 
-	fake := &proctest.Fake{}
-	if err := initmod.Rename(t.Context(), root, fake, "github.com/acme/shop"); err == nil || len(fake.Calls()) != 0 {
-		t.Fatalf("Rename() = %v after %v, want a parse failure before go.mod is touched", err, fake.Calls())
-	}
+	return fake.Calls(), err
 }
 
-func TestRenameReportsToolFailure(t *testing.T) {
+// module writes a small module, with any extra files, to a scratch directory.
+func module(t *testing.T, extra fstest.MapFS) string {
+	t.Helper()
+
+	root := t.TempDir()
+	files := fstest.MapFS{
+		"go.mod": {Data: []byte("module example.com/old\n")},
+		"a.go":   {Data: []byte(source)},
+		// The gate's own source, which a project must not keep.
+		"tools/gate/main.go":      {Data: []byte("package main\n")},
+		"tools/gate/main_test.go": {Data: []byte("package main\n")},
+	}
+
+	// An extra file of the same name replaces the default one.
+	maps.Copy(files, extra)
+
+	if err := os.CopyFS(root, files); err != nil {
+		t.Fatalf("write module: %v", err)
+	}
+
+	return root
+}
+
+func TestRename(t *testing.T) {
 	t.Parallel()
 
-	root := module(t)
-	errTool := errors.New("exit status 1")
+	tests := []renameCase{
+		{
+			name: "renames, pins the gate and drops its source", next: next, runs: 1,
+			wantSource: renamed, wantCalls: []string{edit, pin, format},
+		},
+		{
+			// go.mod is the fake's to edit, so it still names the old module, as
+			// after a failure part way; a second run must finish cleanly.
+			name: "can be run again", next: next, runs: 2,
+			wantSource: renamed, wantCalls: []string{edit, pin, format},
+		},
+		{
+			name: "carries on when the module is already renamed", next: next, runs: 1,
+			extra:      fstest.MapFS{"go.mod": {Data: []byte("module " + next + "\n")}},
+			wantSource: source, wantCalls: []string{pin, format},
+		},
+		{
+			name: "rejects a path with spaces", next: "Bad Path", runs: 1,
+			wantErr: initmod.ErrModule, wantSource: source, keepsGate: true,
+		},
+		{
+			name: "rejects a path without a host", next: "shop", runs: 1,
+			wantErr: initmod.ErrModule, wantSource: source, keepsGate: true,
+		},
+		{
+			name: "rejects the template's own path", next: "github.com/latebit-io/go_project", runs: 1,
+			wantErr: initmod.ErrModule, wantSource: source, keepsGate: true,
+		},
+		{
+			name: "stops before go.mod on source that does not parse", next: next, runs: 1,
+			extra:   fstest.MapFS{"z/broken.go": {Data: []byte("package")}},
+			wantErr: errAny, wantSource: renamed, keepsGate: true,
+		},
+		{
+			name: "reports a failing go mod edit", next: next, runs: 1, wantErr: errTool, wantSource: renamed,
+			answers:   map[string]proctest.Answer{"go mod edit": {Err: errTool}},
+			wantCalls: []string{edit}, keepsGate: true,
+		},
+		{
+			// Without the pin there is no gate to fall back on, so its source stays.
+			name: "keeps the gate's source when it cannot be pinned", next: next, runs: 1,
+			answers: map[string]proctest.Answer{"go get": {Err: errTool}}, wantErr: errTool,
+			wantSource: renamed, wantCalls: []string{edit, pin}, keepsGate: true,
+		},
+		{
+			name: "reports a failing format", next: next, runs: 1, wantErr: errTool, wantSource: renamed,
+			answers:   map[string]proctest.Answer{format: {Err: errTool}},
+			wantCalls: []string{edit, pin, format},
+		},
+	}
 
-	for _, failing := range []string{"go mod edit", "golangci-lint fmt"} {
-		fake := &proctest.Fake{Answers: map[string]proctest.Answer{failing: {Err: errTool}}}
-		if err := initmod.Rename(t.Context(), root, fake, "github.com/acme/"+failing[:2]); !errors.Is(err, errTool) {
-			t.Errorf("Rename() with failing %q = %v, want the tool failure", failing, err)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := module(t, tt.extra)
+
+			calls, err := rename(t, root, &tt)
+			if !matches(err, tt.wantErr) {
+				t.Fatalf("Rename() error = %v, want %v", err, tt.wantErr)
+			}
+
+			got, readErr := fs.ReadFile(os.DirFS(root), "a.go")
+			if readErr != nil || string(got) != tt.wantSource {
+				t.Fatalf("a.go after Rename() =\n%s\n%v\nwant\n%s", got, readErr, tt.wantSource)
+			}
+
+			if !slices.Equal(calls, tt.wantCalls) {
+				t.Fatalf("Rename() ran %v, want %v", calls, tt.wantCalls)
+			}
+
+			_, statErr := fs.Stat(os.DirFS(root), "tools")
+			if kept := statErr == nil; kept != tt.keepsGate {
+				t.Fatalf("gate source kept = %v, want %v", kept, tt.keepsGate)
+			}
+		})
 	}
 }
