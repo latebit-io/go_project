@@ -29,13 +29,19 @@ func (f *fakeRepository) Save(_ context.Context, task *domain.Task) error {
 	return nil
 }
 
-func (f *fakeRepository) Find(_ context.Context, id domain.ID) (*domain.Task, error) {
+func (f *fakeRepository) Update(
+	_ context.Context, id domain.ID, change func(*domain.Task) error,
+) (*domain.Task, error) {
 	task, known := f.tasks[id]
 	if !known {
 		return nil, domain.ErrNotFound
 	}
 
-	return task, nil
+	if f.saveErr != nil {
+		return nil, f.saveErr
+	}
+
+	return task, change(task)
 }
 
 func (f *fakeRepository) List(context.Context) ([]*domain.Task, error) {

@@ -25,9 +25,11 @@ func hiddenFiles() fstest.MapFS {
 		domain + "order_it.go": source("//go:build integration\n\npackage domain\n\nimport \"net/http\"\n"),
 		domain + "io_linux.go": source("package domain\n\nimport \"os\"\n"),
 		domain + "sock.go":     source("//go:build unix\n\npackage domain\n"),
-		domain + "x_test.go":   source("package domain_test\n\nimport \"testing\"\n"),
-		domain + "gen.go":      source("//go:build ignore\n\npackage main\n"),
-		"pkg/tagged/only.go":   source("//go:build never\n\npackage tagged\n"),
+		// True on every supported platform, and still refused.
+		domain + "version.go": source("//go:build !amd64.v4 || go1.20\n\npackage domain\n"),
+		domain + "x_test.go":  source("package domain_test\n\nimport \"testing\"\n"),
+		domain + "gen.go":     source("//go:build ignore\n\npackage main\n"),
+		"pkg/tagged/only.go":  source("//go:build never\n\npackage tagged\n"),
 	}
 }
 
@@ -41,17 +43,21 @@ func TestLoadReadsEveryFile(t *testing.T) {
 
 	got := make([]string, 0, len(files))
 	for _, file := range files {
-		got = append(got, strings.Join([]string{file.Name, file.Package, strings.Join(file.Imports, ","), file.Unbuilt}, " "))
+		row := []string{file.Name, file.Package, strings.Join(file.Imports, ","), file.Excluded}
+		got = append(got, strings.Join(row, "|"))
 	}
 
+	const constrained = "has a build constraint"
+
 	want := []string{
-		"gen.go main  linux/amd64",
-		"io_linux.go domain os darwin/arm64",
-		"order.go domain errors ",
-		"order_it.go domain net/http linux/amd64",
-		"sock.go domain  windows/amd64",
-		"x_test.go domain testing ",
-		"only.go tagged  linux/amd64",
+		"gen.go|main||" + constrained,
+		"io_linux.go|domain|os|is left out of the darwin/arm64 build",
+		"order.go|domain|errors|",
+		"order_it.go|domain|net/http|" + constrained,
+		"sock.go|domain||" + constrained,
+		"version.go|domain||" + constrained,
+		"x_test.go|domain|testing|",
+		"only.go|tagged||" + constrained,
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("Load() files =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -71,13 +77,14 @@ func TestLoadedFilesAreChecked(t *testing.T) {
 		got = append(got, v.String())
 	}
 
-	const missed = ", so lint and tests would miss it"
+	const missed = ", so lint and tests would miss it somewhere"
 
 	want := []string{
-		"internal/ordering/domain: build: gen.go is left out of the linux/amd64 build" + missed,
+		"internal/ordering/domain: build: gen.go has a build constraint" + missed,
 		"internal/ordering/domain: build: io_linux.go is left out of the darwin/arm64 build" + missed,
-		"internal/ordering/domain: build: order_it.go is left out of the linux/amd64 build" + missed,
-		"internal/ordering/domain: build: sock.go is left out of the windows/amd64 build" + missed,
+		"internal/ordering/domain: build: order_it.go has a build constraint" + missed,
+		"internal/ordering/domain: build: sock.go has a build constraint" + missed,
+		"internal/ordering/domain: build: version.go has a build constraint" + missed,
 		`internal/ordering/domain: import: domain may not import "net/http"`,
 		`internal/ordering/domain: import: domain may not import "os"`,
 		"internal/ordering/domain: naming: package main belongs under cmd/<name>",

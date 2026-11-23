@@ -4,6 +4,7 @@ package memory
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/latebit-io/go_project/internal/tasks/domain"
@@ -37,20 +38,30 @@ func (r *Repository) Save(_ context.Context, task *domain.Task) error {
 	return nil
 }
 
-// Find returns a copy of the task with the ID, or domain.ErrNotFound.
-func (r *Repository) Find(_ context.Context, id domain.ID) (*domain.Task, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+// Update changes the stored task under the write lock, so concurrent
+// updates of one task run one after the other. It returns a copy.
+func (r *Repository) Update(
+	_ context.Context, id domain.ID, change func(*domain.Task) error,
+) (*domain.Task, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	task, known := r.tasks[id]
 	if !known {
-		return nil, fmt.Errorf("find %q: %w", id, domain.ErrNotFound)
+		return nil, fmt.Errorf("update %q: %w", id, domain.ErrNotFound)
 	}
+
+	if err := change(&task); err != nil {
+		return nil, err
+	}
+
+	r.tasks[id] = task
 
 	return &task, nil
 }
 
-// List returns copies of every task in insertion order.
+// List returns copies of every task, oldest first; tasks created at the
+// same instant keep their insertion order.
 func (r *Repository) List(context.Context) ([]*domain.Task, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -60,6 +71,8 @@ func (r *Repository) List(context.Context) ([]*domain.Task, error) {
 		task := r.tasks[id]
 		tasks = append(tasks, &task)
 	}
+
+	slices.SortStableFunc(tasks, func(a, b *domain.Task) int { return a.CreatedAt().Compare(b.CreatedAt()) })
 
 	return tasks, nil
 }

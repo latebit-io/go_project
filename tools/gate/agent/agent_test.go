@@ -29,6 +29,8 @@ type rig struct {
 	gitDir  string
 	gateErr error
 	gates   int
+	// duringGate, when set, runs while the gate does, to change the tree under it.
+	duringGate func()
 }
 
 func newRig(t *testing.T) *rig {
@@ -65,6 +67,10 @@ func (r *rig) run(t *testing.T, mode string) result {
 		Out:  &out,
 		Gate: func(_ context.Context, w io.Writer) error {
 			r.gates++
+
+			if r.duringGate != nil {
+				r.duringGate()
+			}
 
 			_, err := io.WriteString(w, "==> Lint\nfinding 1\n")
 
@@ -147,6 +153,14 @@ func TestFailingGate(t *testing.T) {
 	if hook := r.run(t, "stop"); !hook.done || !strings.Contains(hook.out, "nothing changed since") {
 		t.Fatalf("stop on the same failing tree = %+v, want it let through with a note", hook)
 	}
+
+	// The user's next message may follow a fix outside the tree, such as
+	// installing a tool, so the failure is forgotten and the gate runs again.
+	r.run(t, "prompt")
+
+	if hook := r.run(t, "stop"); hook.done || r.gates != 2 {
+		t.Fatalf("stop after a user prompt = %+v after %d gate runs, want the gate retried", hook, r.gates)
+	}
 }
 
 func TestFailingGateBlocksAClaudeStop(t *testing.T) {
@@ -160,6 +174,28 @@ func TestFailingGateBlocksAClaudeStop(t *testing.T) {
 
 	if !hook.done || !blocked || r.gates != 1 {
 		t.Fatalf("claude-stop on a failing tree = %+v after %d gate runs, want a JSON block", hook, r.gates)
+	}
+}
+
+func TestPassIsNotRecordedForATreeThatMoved(t *testing.T) {
+	t.Parallel()
+
+	r := newRig(t)
+	r.duringGate = func() { r.answers["git write-tree"] = secondTree() }
+
+	got := r.run(t, "")
+	if got.done || !strings.Contains(got.out, "Files changed while the gate ran") {
+		t.Fatalf("run = %+v, want the pass refused because the tree moved", got)
+	}
+
+	if r.state(t, "gate-result") != "" {
+		t.Fatalf("gate-result = %q, want nothing recorded", r.state(t, "gate-result"))
+	}
+
+	r.duringGate = nil
+
+	if again := r.run(t, ""); again.done || !strings.Contains(again.out, "stage them") || r.gates != 2 {
+		t.Fatalf("second run = %+v after %d gate runs, want the gate rerun on the settled tree", again, r.gates)
 	}
 }
 

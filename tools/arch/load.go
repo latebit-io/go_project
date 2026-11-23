@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"go/build"
+	"go/build/constraint"
 	"go/parser"
 	"go/token"
 	"io"
@@ -33,7 +34,11 @@ func Load(tree fs.FS) (string, []File, error) {
 			return fileErr
 		}
 
-		file.Unbuilt, fileErr = unbuilt(tree, name)
+		// A constraint already settled it; otherwise the file name may still exclude it.
+		if file.Excluded == "" {
+			file.Excluded, fileErr = unbuilt(tree, name)
+		}
+
 		files = append(files, file)
 
 		return fileErr
@@ -46,7 +51,7 @@ func Load(tree fs.FS) (string, []File, error) {
 }
 
 func parseFile(name string, src []byte) (File, error) {
-	parsed, err := parser.ParseFile(token.NewFileSet(), name, src, parser.ImportsOnly)
+	parsed, err := parser.ParseFile(token.NewFileSet(), name, src, parser.ImportsOnly|parser.ParseComments)
 	if err != nil {
 		return File{}, fmt.Errorf("parse %s: %w", name, err)
 	}
@@ -55,6 +60,16 @@ func parseFile(name string, src []byte) (File, error) {
 		Dir:     path.Dir(name),
 		Name:    path.Base(name),
 		Package: strings.TrimSuffix(parsed.Name.Name, "_test"),
+	}
+
+	// Any constraint is refused, not only one that fails here: which tags and
+	// CPU features a build sets cannot be known from one machine.
+	for _, group := range parsed.Comments {
+		for _, comment := range group.List {
+			if constraint.IsGoBuild(comment.Text) || constraint.IsPlusBuild(comment.Text) {
+				file.Excluded = "has a build constraint"
+			}
+		}
 	}
 
 	for _, spec := range parsed.Imports {
@@ -69,8 +84,8 @@ func parseFile(name string, src []byte) (File, error) {
 	return file, nil
 }
 
-// unbuilt names the first supported platform whose build leaves the file out
-// because of a build constraint or a file name suffix, or "" when all take it.
+// unbuilt says which supported platform leaves the file out because of its
+// name, such as a _linux.go suffix, or "" when all take it.
 func unbuilt(tree fs.FS, name string) (string, error) {
 	for _, platform := range Platforms() {
 		ctx := build.Default
@@ -91,7 +106,7 @@ func unbuilt(tree fs.FS, name string) (string, error) {
 		}
 
 		if !match {
-			return platform, nil
+			return "is left out of the " + platform + " build", nil
 		}
 	}
 

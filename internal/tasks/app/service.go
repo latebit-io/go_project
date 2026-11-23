@@ -37,16 +37,12 @@ func (s *Service) Add(ctx context.Context, title string) (*domain.Task, error) {
 
 // Complete marks the task with the ID done.
 func (s *Service) Complete(ctx context.Context, id domain.ID) (*domain.Task, error) {
-	task, err := s.repo.Find(ctx, id)
+	now := s.now()
+
+	// Read, check and write happen inside the repository, so two requests
+	// cannot both complete the same task.
+	task, err := s.repo.Update(ctx, id, func(task *domain.Task) error { return task.Complete(now) })
 	if err != nil {
-		return nil, fmt.Errorf("complete task %q: %w", id, err)
-	}
-
-	if err := task.Complete(s.now()); err != nil {
-		return nil, fmt.Errorf("complete task %q: %w", id, err)
-	}
-
-	if err := s.repo.Save(ctx, task); err != nil {
 		return nil, fmt.Errorf("complete task %q: %w", id, err)
 	}
 

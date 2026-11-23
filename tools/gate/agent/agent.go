@@ -32,6 +32,7 @@ const (
 		"to stage them with git add -A, and offer a commit subject: conventional type, description of " +
 		"%d words at most. Never run git commit; the user commits."
 	failedNote  = "The gate failed. Fix the cause; never weaken a guard rail to pass."
+	movedNote   = "Files changed while the gate ran, so its pass is not for this tree. Run the step again."
 	unchanged   = "The gate failed on this exact tree and nothing changed since; not ready to commit."
 	brokenNote  = "The task-complete step could not run: "
 	nothingToDo = "ok: nothing uncommitted"
@@ -39,6 +40,9 @@ const (
 	// questionPrefix marks output meant for the user rather than a failure to fix.
 	questionPrefix = "QUESTION: "
 )
+
+// decisionBlock tells Claude Code to keep the agent working and why.
+const decisionBlock = "block"
 
 // ErrMode marks a mode the step does not know.
 var ErrMode = errors.New("unknown agent mode")
@@ -102,9 +106,10 @@ func (s *session) step(ctx context.Context) (bool, error) {
 		}
 	}
 
-	// The user has taken their turn, which answers the question either way.
+	// The user has taken their turn. That answers the simplify question either
+	// way, and they may have fixed what failed the gate outside the tree.
 	if s.kind == kindPrompt {
-		return true, s.settleSimplify()
+		return true, errors.Join(s.settleSimplify(), s.forgetFailure())
 	}
 
 	dirty, err := s.cfg.Repo.Dirty(ctx)
@@ -196,7 +201,7 @@ type identity struct {
 }
 
 func (s *session) identify(ctx context.Context) (identity, error) {
-	work, err := s.snapshot(ctx, ".")
+	work, err := s.workTree(ctx)
 	if err != nil {
 		return identity{}, err
 	}
@@ -226,7 +231,7 @@ func (s *session) runGate(ctx context.Context, key string) (bool, error) {
 
 	gateErr := s.cfg.Gate(ctx, &output)
 	if gateErr == nil {
-		return true, s.write(fileGate, key+" pass")
+		return s.recordPass(ctx, key)
 	}
 
 	if err := s.write(fileGate, key+" fail"); err != nil {
@@ -239,10 +244,29 @@ func (s *session) runGate(ctx context.Context, key string) (bool, error) {
 
 	// Claude Code sends a blocked stop's reason back to the agent.
 	if s.claude {
-		return false, writeReply(s.cfg.Out, reply{Decision: "block", Reason: report})
+		return false, writeReply(s.cfg.Out, reply{Decision: decisionBlock, Reason: report})
 	}
 
 	return false, s.say(report)
+}
+
+// recordPass stores the pass only if the tree is still the one identified
+// before the gate ran; the gate reads live files, not a snapshot.
+func (s *session) recordPass(ctx context.Context, key string) (bool, error) {
+	after, err := s.identify(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	if after.key == key {
+		return true, s.write(fileGate, key+" pass")
+	}
+
+	if s.claude {
+		return false, writeReply(s.cfg.Out, reply{Decision: decisionBlock, Reason: movedNote})
+	}
+
+	return false, s.say(movedNote)
 }
 
 // ask hands the agent a question to relay to the user, once per tree, and
@@ -257,7 +281,7 @@ func (s *session) ask(file, tree, question string) (bool, error) {
 	}
 
 	if s.claude {
-		return true, writeReply(s.cfg.Out, reply{Decision: "block", Reason: question, SystemMessage: question})
+		return true, writeReply(s.cfg.Out, reply{Decision: decisionBlock, Reason: question, SystemMessage: question})
 	}
 
 	return true, s.say(questionPrefix + question)

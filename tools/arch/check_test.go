@@ -84,6 +84,11 @@ func TestCheckRejects(t *testing.T) {
 			want: `internal/ordering/app: import: app may not import "C"`,
 		},
 		{
+			name: "adapter links C",
+			pkg:  pkg("internal/ordering/adapters/sqlite", "sqlite", "C"),
+			want: `internal/ordering/adapters/sqlite: import: adapters may not import "C"`,
+		},
+		{
 			name: "import from a skipped directory",
 			pkg:  pkg("internal/ordering/domain", "domain", module+"/internal/ordering/domain/testdata/io"),
 			want: `internal/ordering/domain: import: may not import "internal/ordering/domain/testdata/io": ` +

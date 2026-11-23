@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+    # edited: the title is checked again when it changes.
+    types: [opened, synchronize, reopened, edited]
   workflow_call:
   schedule:
     - cron: "17 6 * * 1" # weekly: new advisories land without a push
@@ -12,11 +14,30 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # A title edit must not cancel a run that is checking code.
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event.action == 'edited' && 'title' || 'code' }}
   cancel-in-progress: true
 
 jobs:
+  # A squash merge turns the title into the commit subject on main.
+  title:
+    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - run: go run ./tools/gate commit-msg --subject "$TITLE"
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+
   gate:
+    # A title or description edit changes no code.
+    if: github.event.action != 'edited'
     strategy:
       fail-fast: false
       matrix:
@@ -35,17 +56,11 @@ jobs:
         with:
           version-file: .golangci-lint-version
           install-only: true
-      # A squash merge turns the title into the commit subject on main.
-      - name: Pull request title
-        if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
-        shell: bash
-        run: go run ./tools/gate commit-msg --subject "$TITLE"
-        env:
-          TITLE: ${{ github.event.pull_request.title }}
       # Same program as the local hook, so CI and a laptop cannot disagree.
       - run: go run ./tools/gate
 
   vuln:
+    if: github.event.action != 'edited'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

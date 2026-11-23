@@ -12,14 +12,17 @@ import (
 	"github.com/latebit-io/go_project/tools/gate/proc/proctest"
 )
 
-const source = `// Package a mentions example.com/old in prose.
+const source = `// Package a mentions "example.com/old" in prose.
 package a
 
 import (
 	"example.com/old"
-	"example.com/old/internal/b"
+	b "example.com/old/internal/b"
 	"example.com/older/c"
 )
+
+// schemaID is data, not an import, and must survive the rename.
+const schemaID = "example.com/old/schema"
 `
 
 // module writes a small module to a scratch directory and returns its path.
@@ -54,20 +57,30 @@ func TestRenameRewritesImportsOnly(t *testing.T) {
 		t.Fatalf("read a.go: %v", err)
 	}
 
-	want := `// Package a mentions example.com/old in prose.
+	want := `// Package a mentions "example.com/old" in prose.
 package a
 
 import (
 	"github.com/acme/shop"
-	"github.com/acme/shop/internal/b"
+	b "github.com/acme/shop/internal/b"
 	"example.com/older/c"
 )
+
+// schemaID is data, not an import, and must survive the rename.
+const schemaID = "example.com/old/schema"
 `
 	if string(got) != want {
 		t.Fatalf("a.go after Rename() =\n%s\nwant\n%s", got, want)
 	}
 
 	calls := []string{"go mod edit -module github.com/acme/shop", "golangci-lint fmt"}
+
+	// go.mod is the fake's to edit, so it still names the old module: running
+	// again must finish cleanly, as it would after a failure part way.
+	if err := initmod.Rename(t.Context(), root, &proctest.Fake{}, "github.com/acme/shop"); err != nil {
+		t.Fatalf("second Rename() error = %v, want it to be repeatable", err)
+	}
+
 	if !slices.Equal(fake.Calls(), calls) {
 		t.Fatalf("Rename() ran %v, want %v", fake.Calls(), calls)
 	}
@@ -82,6 +95,20 @@ func TestRenameRejectsBadPaths(t *testing.T) {
 		if err := initmod.Rename(t.Context(), root, &proctest.Fake{}, next); !errors.Is(err, initmod.ErrModule) {
 			t.Errorf("Rename(%q) = %v, want a module path error", next, err)
 		}
+	}
+}
+
+func TestRenameStopsBeforeGoModOnBrokenSource(t *testing.T) {
+	t.Parallel()
+
+	root := module(t)
+	if err := os.CopyFS(root, fstest.MapFS{"broken/b.go": {Data: []byte("package")}}); err != nil {
+		t.Fatalf("write broken file: %v", err)
+	}
+
+	fake := &proctest.Fake{}
+	if err := initmod.Rename(t.Context(), root, fake, "github.com/acme/shop"); err == nil || len(fake.Calls()) != 0 {
+		t.Fatalf("Rename() = %v after %v, want a parse failure before go.mod is touched", err, fake.Calls())
 	}
 }
 

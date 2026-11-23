@@ -22,7 +22,7 @@ the layout, import, naming and cleanup rules the gate enforces.
   at most, lowercase, no period. The reason goes in the body.
 - `feat`, `fix`, `perf` and `test` branches that change Go code must add or
   change a test. Write the failing test first.
-- No build constraints or platform file suffixes: every Go file builds on
+- No build constraints, platform file suffixes or cgo: every Go file builds on
   linux/amd64, darwin/arm64 and windows/amd64, and the gate cross-builds all three.
 - `golangci-lint fmt` fixes formatting. Everything else is fixed in the code.
 - Never weaken a guard rail to pass: no edits to the gate or what it reads

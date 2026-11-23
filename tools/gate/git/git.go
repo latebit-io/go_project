@@ -54,14 +54,16 @@ func (r Repo) Dirty(ctx context.Context) (bool, error) {
 // Changed lists the files under the pathspecs that differ from a commit,
 // untracked files included. filter limits tracked changes like --diff-filter.
 func (r Repo) Changed(ctx context.Context, since, filter string, pathspec ...string) ([]string, error) {
-	diff := []string{"diff", "--name-only", "--diff-filter=" + filter, since, "--"}
+	diff := []string{"diff", "--name-only", "-z", "--diff-filter=" + filter, since, "--"}
 
-	tracked, err := r.lines(ctx, slices.Concat(diff, pathspec)...)
+	tracked, err := r.names(ctx, slices.Concat(diff, pathspec)...)
 	if err != nil {
 		return nil, err
 	}
 
-	untracked, err := r.lines(ctx, slices.Concat([]string{"ls-files", "-o", "--exclude-standard", "--"}, pathspec)...)
+	others := []string{"ls-files", "-o", "-z", "--exclude-standard", "--"}
+
+	untracked, err := r.names(ctx, slices.Concat(others, pathspec)...)
 
 	return append(tracked, untracked...), err
 }
@@ -111,6 +113,20 @@ func (r Repo) Snapshot(ctx context.Context, index, pathspec string) (string, err
 	return r.line(ctx, env, "write-tree")
 }
 
+// WorkTree stores a tree of the whole work tree: every tracked file as it is
+// on disk, ignored or not, plus untracked files that are not ignored.
+func (r Repo) WorkTree(ctx context.Context, index string) (string, error) {
+	env := []string{"GIT_INDEX_FILE=" + index}
+
+	// Starting from the commit keeps tracked files that .gitignore also
+	// matches; git add alone would leave those out and miss edits to them.
+	if _, err := r.line(ctx, env, "read-tree", "HEAD"); err != nil {
+		return "", err
+	}
+
+	return r.Snapshot(ctx, index, ".")
+}
+
 // HasTree reports whether the id still names a tree; git prunes unreferenced ones.
 func (r Repo) HasTree(ctx context.Context, id string) bool {
 	if id == "" {
@@ -158,6 +174,17 @@ func (r Repo) line(ctx context.Context, env []string, args ...string) (string, e
 	out, err := r.raw(ctx, env, args...)
 
 	return strings.TrimSpace(out), err
+}
+
+// names reads NUL-separated paths, which git prints unquoted with -z; in
+// line output it quotes and escapes any name outside ASCII.
+func (r Repo) names(ctx context.Context, args ...string) ([]string, error) {
+	out, err := r.raw(ctx, nil, args...)
+	if err != nil || out == "" {
+		return nil, err
+	}
+
+	return strings.Split(strings.TrimSuffix(out, "\x00"), "\x00"), nil
 }
 
 func (r Repo) lines(ctx context.Context, args ...string) ([]string, error) {

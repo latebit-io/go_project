@@ -88,16 +88,55 @@ func (s *session) settleSimplify() error {
 	return nil
 }
 
-// snapshot stores a tree of the non-ignored files under the pathspec, tracked or not.
-func (s *session) snapshot(ctx context.Context, pathspec string) (string, error) {
-	// The scratch index must start empty, or the tree keeps files from the last snapshot.
+// forgetFailure drops a remembered gate failure so the next stop runs the
+// gate again. A remembered pass stays: it can only go stale by a tree change.
+func (s *session) forgetFailure() error {
+	if !strings.HasSuffix(s.read(fileGate), " fail") {
+		return nil
+	}
+
+	if err := s.state.Remove(fileGate); err != nil {
+		return fmt.Errorf("forget gate failure: %w", err)
+	}
+
+	return nil
+}
+
+// scratchIndex returns the path of an index file that does not exist yet, so
+// a snapshot keeps nothing from the one before.
+func (s *session) scratchIndex() (string, error) {
 	if err := s.state.Remove(fileIndex); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("reset scratch index: %w", err)
 	}
 
-	tree, err := s.cfg.Repo.Snapshot(ctx, filepath.Join(s.state.Name(), fileIndex), pathspec)
+	return filepath.Join(s.state.Name(), fileIndex), nil
+}
+
+// snapshot stores a tree of the non-ignored files under the pathspec, tracked or not.
+func (s *session) snapshot(ctx context.Context, pathspec string) (string, error) {
+	index, err := s.scratchIndex()
+	if err != nil {
+		return "", err
+	}
+
+	tree, err := s.cfg.Repo.Snapshot(ctx, index, pathspec)
 	if err != nil {
 		return "", fmt.Errorf("snapshot %s: %w", pathspec, err)
+	}
+
+	return tree, nil
+}
+
+// workTree stores a tree of everything the gate can read from the work tree.
+func (s *session) workTree(ctx context.Context) (string, error) {
+	index, err := s.scratchIndex()
+	if err != nil {
+		return "", err
+	}
+
+	tree, err := s.cfg.Repo.WorkTree(ctx, index)
+	if err != nil {
+		return "", fmt.Errorf("snapshot work tree: %w", err)
 	}
 
 	return tree, nil

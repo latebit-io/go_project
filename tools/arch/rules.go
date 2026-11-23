@@ -52,22 +52,30 @@ func policyOf(l layer) policy {
 			scoped:      true,
 			sameContext: []layer{layerDomain, layerApp, layerAdapters},
 			anyContext:  []layer{layerPlatform},
+			stdlibDeny:  noCgo(),
 			external:    true,
 		}
 	case layerPlatform:
-		return policy{anyContext: []layer{layerPlatform}, external: true}
+		return policy{anyContext: []layer{layerPlatform}, stdlibDeny: noCgo(), external: true}
 	case layerCmd:
 		return policy{
 			anyContext: []layer{layerDomain, layerApp, layerAdapters, layerPlatform},
+			stdlibDeny: noCgo(),
 			external:   true,
 			dirExtra:   "-",
 			main:       mainRequired,
 		}
 	case layerTooling:
-		return policy{anyContext: []layer{layerTooling}, main: mainAllowed}
+		return policy{anyContext: []layer{layerTooling}, stdlibDeny: noCgo(), main: mainAllowed}
 	default:
 		return policy{}
 	}
+}
+
+// noCgo applies to every layer: a cgo file drops out of any build without a
+// C compiler, where lint and tests would then miss it.
+func noCgo() []string {
+	return []string{"C"}
 }
 
 // appDeny keeps I/O and delivery mechanisms out of use cases.

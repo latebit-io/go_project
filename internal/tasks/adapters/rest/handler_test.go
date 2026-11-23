@@ -32,7 +32,7 @@ var errBroken = errors.New("disk on fire")
 
 func (brokenRepository) Save(context.Context, *domain.Task) error { return errBroken }
 
-func (brokenRepository) Find(context.Context, domain.ID) (*domain.Task, error) {
+func (brokenRepository) Update(context.Context, domain.ID, func(*domain.Task) error) (*domain.Task, error) {
 	return nil, errBroken
 }
 
@@ -130,6 +130,8 @@ func TestErrorsMapToStatus(t *testing.T) {
 	}{
 		{name: "malformed body", req: post(tasksPath, `{`), want: http.StatusBadRequest},
 		{name: "unknown field", req: post(tasksPath, `{"name":"x"}`), want: http.StatusBadRequest},
+		{name: "data after the object", req: post(tasksPath, `{"title":"x"} junk`), want: http.StatusBadRequest},
+		{name: "second object", req: post(tasksPath, `{"title":"x"}{"title":"y"}`), want: http.StatusBadRequest},
 		{name: "blank title", req: post(tasksPath, `{"title":" "}`), want: http.StatusUnprocessableEntity},
 		{name: "unknown task", req: post("/tasks/nope/complete", ""), want: http.StatusNotFound},
 		{

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"os/exec"
@@ -98,6 +99,20 @@ func launch(t *testing.T) command {
 	if err != nil {
 		t.Fatalf("start command: %v", err)
 	}
+
+	// Every started process is waited for, also when the test fails early or
+	// on Windows, where the test does not stop the command itself.
+	t.Cleanup(func() {
+		if cmd.ProcessState != nil {
+			return
+		}
+
+		if killErr := cmd.Process.Kill(); killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+			t.Errorf("stop command: %v", killErr)
+		}
+
+		t.Logf("command stopped: %v", cmd.Wait())
+	})
 
 	var first started
 

@@ -44,8 +44,8 @@ func cleanAnswers() map[string]proctest.Answer {
 		"git rev-parse --abbrev-ref HEAD": {Out: "feat/x\n"},
 		"git merge-base":                  {Out: "abc\n"},
 		"git log":                         {Out: "feat: add x\n"},
-		"git diff --name-only":            {Out: "internal/platform/x/x.go\n"},
-		"git ls-files -o":                 {Out: "internal/platform/x/x_test.go\n"},
+		"git diff --name-only":            {Out: "internal/platform/x/x.go\x00"},
+		"git ls-files -o":                 {Out: "internal/platform/x/x_test.go\x00"},
 		"go env CGO_ENABLED":              {Out: "1\n"},
 		"git config --get core.hooksPath": {Out: ".githooks\n"},
 	}
@@ -181,7 +181,7 @@ func TestStepsFail(t *testing.T) {
 			name: "code without a test", step: "tests-changed", want: "changes Go code but no test",
 			change: func(_ fstest.MapFS, a map[string]proctest.Answer) {
 				a["git ls-files -o"] = proctest.Answer{}
-				a["git diff --name-only --diff-filter=AM"] = proctest.Answer{}
+				a["git diff --name-only -z --diff-filter=AM"] = proctest.Answer{}
 			},
 		},
 		{

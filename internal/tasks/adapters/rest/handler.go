@@ -4,6 +4,7 @@ package rest
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -55,7 +56,9 @@ func (h handler) add(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	dec.DisallowUnknownFields()
 
-	if err := dec.Decode(&req); err != nil {
+	// The body must be one JSON object and nothing after it.
+	var extra json.RawMessage
+	if err := dec.Decode(&req); err != nil || !errors.Is(dec.Decode(&extra), io.EOF) {
 		h.fail(w, r, errInvalidBody)
 
 		return

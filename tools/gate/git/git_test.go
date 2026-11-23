@@ -60,8 +60,8 @@ func TestDirtyAndChanged(t *testing.T) {
 
 	r, fake := repo(nil, map[string]proctest.Answer{
 		"git status":   {Out: " M a.go\n"},
-		"git diff":     {Out: "a.go\nb.go\n"},
-		"git ls-files": {Out: "c.go\n"},
+		"git diff":     {Out: "a.go\x00caf\u00e9 b.go\x00"},
+		"git ls-files": {Out: "c.go\x00"},
 	})
 
 	if dirty, err := r.Dirty(t.Context()); !dirty || err != nil {
@@ -69,11 +69,11 @@ func TestDirtyAndChanged(t *testing.T) {
 	}
 
 	got, err := r.Changed(t.Context(), "abc", "AM", "*_test.go")
-	if err != nil || !slices.Equal(got, []string{"a.go", "b.go", "c.go"}) {
-		t.Fatalf("Changed() = %v, %v, want tracked then untracked", got, err)
+	if err != nil || !slices.Equal(got, []string{"a.go", "caf\u00e9 b.go", "c.go"}) {
+		t.Fatalf("Changed() = %q, %v, want tracked then untracked, names as they are on disk", got, err)
 	}
 
-	if calls := fake.Calls(); calls[1] != "git diff --name-only --diff-filter=AM abc -- *_test.go" {
+	if calls := fake.Calls(); calls[1] != "git diff --name-only -z --diff-filter=AM abc -- *_test.go" {
 		t.Fatalf("Changed() ran %q", calls[1])
 	}
 }
@@ -106,6 +106,31 @@ func TestSnapshotUsesTheScratchIndex(t *testing.T) {
 	want := []string{"GIT_INDEX_FILE=/tmp/index git add -A -- *.go", "GIT_INDEX_FILE=/tmp/index git write-tree"}
 	if calls := fake.Calls(); !slices.Equal(calls, want) {
 		t.Fatalf("Snapshot() ran %v, want %v", calls, want)
+	}
+}
+
+func TestWorkTreeStartsFromTheCommit(t *testing.T) {
+	t.Parallel()
+
+	r, fake := repo(nil, map[string]proctest.Answer{"git write-tree": {Out: "tree1\n"}})
+
+	got, err := r.WorkTree(t.Context(), "/tmp/index")
+	if got != "tree1" || err != nil {
+		t.Fatalf("WorkTree() = %q, %v", got, err)
+	}
+
+	want := []string{
+		"GIT_INDEX_FILE=/tmp/index git read-tree HEAD",
+		"GIT_INDEX_FILE=/tmp/index git add -A -- .",
+		"GIT_INDEX_FILE=/tmp/index git write-tree",
+	}
+	if calls := fake.Calls(); !slices.Equal(calls, want) {
+		t.Fatalf("WorkTree() ran %v, want %v", calls, want)
+	}
+
+	failing, _ := repo(nil, map[string]proctest.Answer{"git read-tree": {Err: errGit}})
+	if _, err := failing.WorkTree(t.Context(), "/tmp/index"); !errors.Is(err, errGit) {
+		t.Fatalf("WorkTree() error = %v, want the failed read-tree", err)
 	}
 }
 

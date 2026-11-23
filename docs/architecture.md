@@ -48,9 +48,9 @@ Reference slice: `internal/tasks` wired by `cmd/tasks-api`.
 - Test files follow the rules of the package they test.
 - No build constraints: every Go file must build on every supported
   platform (linux/amd64, darwin/arm64, windows/amd64), so lint, tests and
-  coverage see all the code everywhere. `//go:build` lines and `_linux.go`-style
-  suffixes fail the gate, and the gate cross-builds each platform. The list is
-  `Platforms` in `tools/arch/rules.go`.
+  coverage see all the code everywhere. Any `//go:build` line, a
+  `_linux.go`-style suffix and cgo (`import "C"`) fail the gate, and the gate
+  cross-builds each platform. The list is `Platforms` in `tools/arch/rules.go`.
 
 ## Naming
 

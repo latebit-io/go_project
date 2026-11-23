@@ -18,11 +18,11 @@ const (
 // File is what the rules need from one Go file. Dir is relative to the module
 // root; Package has any _test suffix removed.
 type File struct {
-	Dir     string
-	Name    string
-	Package string
-	Imports []string
-	Unbuilt string // first supported platform whose build leaves the file out
+	Dir      string
+	Name     string
+	Package  string
+	Imports  []string
+	Excluded string // why some build leaves the file out, or ""
 }
 
 // Violation is one broken rule in one package.
@@ -67,8 +67,8 @@ func checkFile(module string, file *File) []Violation {
 
 	var found []Violation
 
-	if file.Unbuilt != "" {
-		detail := file.Name + " is left out of the " + file.Unbuilt + " build, so lint and tests would miss it"
+	if file.Excluded != "" {
+		detail := file.Name + " " + file.Excluded + ", so lint and tests would miss it somewhere"
 		found = append(found, Violation{Package: rel, Rule: ruleBuild, Detail: detail})
 	}
 

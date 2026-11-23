@@ -33,7 +33,9 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		const content = [result.stdout, result.stderr].join("\n").trim();
-		if (content === lastSent) {
+		// A question is never a repeat: its text is the same for every tree,
+		// and the gate already asks it only once per tree.
+		if (!content.startsWith("QUESTION:") && content === lastSent) {
 			return;
 		}
 		lastSent = content;
