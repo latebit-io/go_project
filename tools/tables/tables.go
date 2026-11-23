@@ -41,9 +41,16 @@ func Check(name string, src []byte) ([]Finding, error) {
 
 	var found []Finding
 
+	// The name the file gives the testing package; without the import it
+	// cannot declare a test.
+	testing := importName(file, "testing")
+	if testing == "" {
+		return nil, nil
+	}
+
 	for _, decl := range file.Decls {
 		fn, isFunc := decl.(*ast.FuncDecl)
-		if !isFunc || !isTest(fn) || runsFromTable(fn) {
+		if !isFunc || !isTest(fn) || runsFromTable(fn, testing) {
 			continue
 		}
 
@@ -67,9 +74,27 @@ func isTest(fn *ast.FuncDecl) bool {
 	return rest == "" || !unicode.IsLower(first)
 }
 
+// importName returns the name a file uses for an imported package: its
+// alias, "." for a dot import, the default name, or "" when not imported.
+func importName(file *ast.File, importPath string) string {
+	for _, spec := range file.Imports {
+		if strings.Trim(spec.Path.Value, "`\"") != importPath {
+			continue
+		}
+
+		if spec.Name != nil {
+			return spec.Name.Name
+		}
+
+		return importPath
+	}
+
+	return ""
+}
+
 // runsFromTable reports a range loop whose body starts a subtest.
-func runsFromTable(fn *ast.FuncDecl) bool {
-	testers := testingParams(fn)
+func runsFromTable(fn *ast.FuncDecl, testing string) bool {
+	testers := testingParams(fn, testing)
 	driven := false
 
 	ast.Inspect(fn.Body, func(node ast.Node) bool {
@@ -86,12 +111,12 @@ func runsFromTable(fn *ast.FuncDecl) bool {
 
 // testingParams collects the names given to *testing.T parameters, of the
 // test itself and of the function literals inside it, whatever they are called.
-func testingParams(fn *ast.FuncDecl) map[string]bool {
+func testingParams(fn *ast.FuncDecl, testing string) map[string]bool {
 	names := map[string]bool{}
 
 	collect := func(params *ast.FieldList) {
 		for _, field := range params.List {
-			if !isTestingT(field.Type) {
+			if !isTestingT(field.Type, testing) {
 				continue
 			}
 
@@ -114,11 +139,16 @@ func testingParams(fn *ast.FuncDecl) map[string]bool {
 	return names
 }
 
-// isTestingT reports the type *testing.T.
-func isTestingT(expr ast.Expr) bool {
+// isTestingT reports the type *testing.T, where testing is the name the
+// file imports the package under: "." means the type is written *T.
+func isTestingT(expr ast.Expr, testing string) bool {
 	pointer, isPointer := expr.(*ast.StarExpr)
 	if !isPointer {
 		return false
+	}
+
+	if bare, isIdent := pointer.X.(*ast.Ident); isIdent {
+		return testing == "." && bare.Name == "T"
 	}
 
 	selector, isSelector := pointer.X.(*ast.SelectorExpr)
@@ -128,7 +158,7 @@ func isTestingT(expr ast.Expr) bool {
 
 	pkg, isIdent := selector.X.(*ast.Ident)
 
-	return isIdent && pkg.Name == "testing"
+	return isIdent && pkg.Name == testing
 }
 
 // startsSubtest reports a call of Run on one of the *testing.T values. Any

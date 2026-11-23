@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -128,8 +127,11 @@ func launch(t *testing.T) command {
 			return
 		}
 
-		if killErr := cmd.Process.Kill(); killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
-			t.Errorf("stop command: %v", killErr)
+		// The test context, already canceled here, may have ended the process;
+		// Windows then refuses the kill with an error of its own. Either way
+		// the process is gone, which is all the cleanup needs.
+		if killErr := cmd.Process.Kill(); killErr != nil {
+			t.Logf("stop command: %v", killErr)
 		}
 
 		t.Logf("command stopped: %v", cmd.Wait())

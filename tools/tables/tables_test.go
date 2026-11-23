@@ -1,16 +1,14 @@
 package tables_test
 
 import (
+	"cmp"
 	"strings"
 	"testing"
 
 	"github.com/latebit-io/go_project/tools/tables"
 )
 
-const (
-	header    = "package x\n\nimport \"testing\"\n\n"
-	notDriven = "x_test.go:5: TestAdd is not table-driven"
-)
+const notDriven = "x_test.go:5: TestAdd is not table-driven"
 
 func TestCheck(t *testing.T) {
 	t.Parallel()
@@ -18,8 +16,10 @@ func TestCheck(t *testing.T) {
 	tests := []struct {
 		name string
 		file string
-		src  string
-		want string
+		// imports replaces the standard `import "testing"` line.
+		imports string
+		src     string
+		want    string
 	}{
 		{
 			name: "table with subtests",
@@ -46,6 +46,30 @@ func TestCheck(t *testing.T) {
 }`,
 		},
 		{
+			name:    "testing imported under another name",
+			imports: `import test "testing"`,
+			src: `func TestAdd(t *test.T) {
+	for _, name := range []string{"a"} {
+		t.Run(name, func(t *test.T) {})
+	}
+}`,
+		},
+		{
+			name:    "testing imported with a dot",
+			imports: `import . "testing"`,
+			src: `func TestAdd(t *T) {
+	for _, name := range []string{"a"} {
+		t.Run(name, func(t *T) {})
+	}
+}`,
+		},
+		{
+			name:    "an aliased test without a table is still found",
+			imports: `import test "testing"`,
+			src:     "func TestAdd(t *test.T) {}",
+			want:    notDriven,
+		},
+		{
 			name: "a loop that runs something else, not a subtest",
 			src: `func TestAdd(t *testing.T) {
 	for _, cmd := range []runner{} {
@@ -63,6 +87,11 @@ func TestCheck(t *testing.T) {
 			name: "the bare name Test is a test",
 			src:  "func Test(t *testing.T) {}",
 			want: "x_test.go:5: Test is not table-driven",
+		},
+		{
+			name:    "a file that does not import testing has no tests",
+			imports: `import "fmt"`,
+			src:     "func TestAdd() {\n\tfmt.Println()\n}",
 		},
 		{
 			name: "single scenario",
@@ -98,12 +127,10 @@ func TestCheck(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			file := tt.file
-			if file == "" {
-				file = "x_test.go"
-			}
+			file := cmp.Or(tt.file, "x_test.go")
+			imports := cmp.Or(tt.imports, `import "testing"`)
 
-			found, err := tables.Check(file, []byte(header+tt.src+"\n"))
+			found, err := tables.Check(file, []byte("package x\n\n"+imports+"\n\n"+tt.src+"\n"))
 			if err != nil {
 				t.Fatalf("Check() error = %v", err)
 			}

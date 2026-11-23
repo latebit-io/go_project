@@ -21,6 +21,8 @@ const (
 // smokeTest is a table-driven smoke test, as the gate requires of every test.
 const smokeTest = `package main
 
+import "testing"
+
 func TestSmoke(t *testing.T) {
 	for _, name := range []string{"starts"} {
 		t.Run(name, func(t *testing.T) {})
@@ -205,7 +207,7 @@ func TestStepsFail(t *testing.T) {
 		{
 			name: "test without a table", step: "tables", want: "1 test(s) are not table-driven",
 			change: func(tree fstest.MapFS, _ map[string]proctest.Answer) {
-				tree["internal/platform/x/x_test.go"] = file("package x\n\nfunc TestX(t *testing.T) {}\n")
+				tree["internal/platform/x/x_test.go"] = file("package x\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) {}\n")
 			},
 		},
 		{
