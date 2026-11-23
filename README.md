@@ -70,6 +70,8 @@ Rules and layout: [docs/architecture.md](docs/architecture.md).
 - Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.
 - A branch that changes Go code must add or change a test, unless its type is
   refactor, chore, docs, style, ci, build or revert.
+- Merging to `main` needs a pull request with one approval, from CodeRabbit or
+  a person, and every review thread resolved. A new push dismisses the approval.
 
 ## Agents
 

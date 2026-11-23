@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -25,6 +26,7 @@ const (
 	fileGate     = "gate-result"
 	fileCommit   = "commit-asked"
 	fileIndex    = "index"
+	fileTracked  = "tracked"
 
 	dirMode  = 0o750
 	fileMode = 0o600
@@ -127,19 +129,56 @@ func (s *session) snapshot(ctx context.Context, pathspec string) (string, error)
 	return tree, nil
 }
 
-// workTree stores a tree of everything the gate can read from the work tree.
+// workTree stores a tree of everything the gate can read from the work tree:
+// every tracked file as it is on disk, plus untracked files that are not ignored.
 func (s *session) workTree(ctx context.Context) (string, error) {
 	index, err := s.scratchIndex()
 	if err != nil {
 		return "", err
 	}
 
-	tree, err := s.cfg.Repo.WorkTree(ctx, index)
+	err = s.addTracked(ctx, index)
+	if err != nil {
+		return "", err
+	}
+
+	tree, err := s.cfg.Repo.Snapshot(ctx, index, ".")
 	if err != nil {
 		return "", fmt.Errorf("snapshot work tree: %w", err)
 	}
 
 	return tree, nil
+}
+
+// addTracked puts every tracked file into the scratch index by name. A plain
+// git add skips a tracked file that .gitignore matches, and would miss edits to it.
+func (s *session) addTracked(ctx context.Context, index string) error {
+	tracked, err := s.cfg.Repo.Tracked(ctx)
+	if err != nil {
+		return fmt.Errorf("list tracked files: %w", err)
+	}
+
+	// A tracked file deleted on disk has nothing to add, and git would refuse the list.
+	present := slices.DeleteFunc(tracked, func(name string) bool {
+		_, statErr := fs.Stat(s.cfg.Tree, name)
+
+		return statErr != nil
+	})
+	if len(present) == 0 {
+		return nil
+	}
+
+	err = s.state.WriteFile(fileTracked, []byte(strings.Join(present, "\x00")), fileMode)
+	if err != nil {
+		return fmt.Errorf("write tracked list: %w", err)
+	}
+
+	err = s.cfg.Repo.Force(ctx, index, filepath.Join(s.state.Name(), fileTracked))
+	if err != nil {
+		return fmt.Errorf("add tracked files: %w", err)
+	}
+
+	return nil
 }
 
 // say writes one line for the agent or the person running the step.

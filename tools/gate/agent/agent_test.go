@@ -8,8 +8,10 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/latebit-io/go_project/tools/gate/agent"
 	"github.com/latebit-io/go_project/tools/gate/git"
@@ -31,6 +33,8 @@ type rig struct {
 	gates   int
 	// duringGate, when set, runs while the gate does, to change the tree under it.
 	duringGate func()
+	// calls are the commands of the latest run.
+	calls []string
 }
 
 func newRig(t *testing.T) *rig {
@@ -43,6 +47,7 @@ func newRig(t *testing.T) *rig {
 		"git rev-parse --abbrev-ref HEAD":  {Out: "feat/x\n"},
 		"git rev-parse HEAD":               {Out: "abc\n"},
 		"git status":                       {Out: " M a.go\n"},
+		"git ls-files -z":                  {Out: "a.go\x00gone.go\x00gen/model.gen.go\x00"},
 		"git write-tree":                   {Out: firstTree + "\n"},
 		"git diff --numstat":               {Out: "5\t5\ta.go\n"},
 	}}
@@ -63,6 +68,7 @@ func (r *rig) run(t *testing.T, mode string) result {
 	done, err := agent.Run(t.Context(), &agent.Config{
 		Mode: mode,
 		Repo: git.Repo{Run: fake, Getenv: func(string) string { return "" }},
+		Tree: fstest.MapFS{"a.go": {}, "gen/model.gen.go": {}},
 		In:   strings.NewReader("{}"),
 		Out:  &out,
 		Gate: func(_ context.Context, w io.Writer) error {
@@ -80,6 +86,8 @@ func (r *rig) run(t *testing.T, mode string) result {
 	if err != nil {
 		t.Fatalf("Run(%q) error = %v", mode, err)
 	}
+
+	r.calls = fake.Calls()
 
 	return result{done: done, out: out.String()}
 }
@@ -130,6 +138,27 @@ func TestPassingGateAsksAboutStagingOncePerTree(t *testing.T) {
 
 	if third := r.run(t, ""); third.done || r.gates != 2 {
 		t.Fatalf("run on a new tree = %+v after %d gate runs, want the gate and the question again", third, r.gates)
+	}
+}
+
+// A tracked file that .gitignore matches must be in the snapshot, or an edit
+// to it would reuse a remembered pass. Files deleted on disk are left out.
+func TestSnapshotForcesTrackedFiles(t *testing.T) {
+	t.Parallel()
+
+	r := newRig(t)
+	r.run(t, "")
+
+	listed := r.state(t, "tracked")
+	if listed != "a.go\x00gen/model.gen.go" {
+		t.Fatalf("tracked list = %q, want the two files that exist", listed)
+	}
+
+	forced := slices.ContainsFunc(r.calls, func(call string) bool {
+		return strings.Contains(call, "git add -f --pathspec-from-file=") && strings.HasSuffix(call, "--pathspec-file-nul")
+	})
+	if !forced {
+		t.Fatalf("no forced add of the tracked files in %v", r.calls)
 	}
 }
 

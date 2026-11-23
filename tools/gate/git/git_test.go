@@ -109,28 +109,28 @@ func TestSnapshotUsesTheScratchIndex(t *testing.T) {
 	}
 }
 
-func TestWorkTreeStartsFromTheCommit(t *testing.T) {
+func TestTrackedAndForce(t *testing.T) {
 	t.Parallel()
 
-	r, fake := repo(nil, map[string]proctest.Answer{"git write-tree": {Out: "tree1\n"}})
+	r, fake := repo(nil, map[string]proctest.Answer{"git ls-files -z": {Out: "a.go\x00gen/model.gen.go\x00"}})
 
-	got, err := r.WorkTree(t.Context(), "/tmp/index")
-	if got != "tree1" || err != nil {
-		t.Fatalf("WorkTree() = %q, %v", got, err)
+	tracked, err := r.Tracked(t.Context())
+	if err != nil || !slices.Equal(tracked, []string{"a.go", "gen/model.gen.go"}) {
+		t.Fatalf("Tracked() = %q, %v", tracked, err)
 	}
 
-	want := []string{
-		"GIT_INDEX_FILE=/tmp/index git read-tree HEAD",
-		"GIT_INDEX_FILE=/tmp/index git add -A -- .",
-		"GIT_INDEX_FILE=/tmp/index git write-tree",
-	}
-	if calls := fake.Calls(); !slices.Equal(calls, want) {
-		t.Fatalf("WorkTree() ran %v, want %v", calls, want)
+	if err := r.Force(t.Context(), "/tmp/index", "/tmp/tracked"); err != nil {
+		t.Fatalf("Force() error = %v", err)
 	}
 
-	failing, _ := repo(nil, map[string]proctest.Answer{"git read-tree": {Err: errGit}})
-	if _, err := failing.WorkTree(t.Context(), "/tmp/index"); !errors.Is(err, errGit) {
-		t.Fatalf("WorkTree() error = %v, want the failed read-tree", err)
+	want := "GIT_INDEX_FILE=/tmp/index git add -f --pathspec-from-file=/tmp/tracked --pathspec-file-nul"
+	if calls := fake.Calls(); calls[len(calls)-1] != want {
+		t.Fatalf("Force() ran %q, want %q", calls[len(calls)-1], want)
+	}
+
+	failing, _ := repo(nil, map[string]proctest.Answer{"git add -f": {Err: errGit}})
+	if err := failing.Force(t.Context(), "/tmp/index", "/tmp/tracked"); !errors.Is(err, errGit) {
+		t.Fatalf("Force() error = %v, want the failed add", err)
 	}
 }
 

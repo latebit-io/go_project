@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"strings"
 
 	"github.com/latebit-io/go_project/tools/gate/conv"
@@ -53,6 +54,8 @@ type Config struct {
 	// from an agent's hooks, and "claude-stop" or "claude-prompt" from Claude Code's.
 	Mode string
 	Repo git.Repo
+	// Tree is the work tree the repository is checked out in.
+	Tree fs.FS
 	In   io.Reader
 	Out  io.Writer
 	// Gate runs every check and writes what a person would read.

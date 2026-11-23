@@ -126,6 +126,7 @@ func (a *app) agent(ctx context.Context, args []string) (bool, error) {
 	done, err := agent.Run(ctx, &agent.Config{
 		Mode: strings.Join(args, ""),
 		Repo: a.repo(a.out),
+		Tree: os.DirFS(a.root),
 		In:   a.in,
 		Out:  a.out,
 		Gate: func(ctx context.Context, out io.Writer) error { return a.check(ctx, out) },

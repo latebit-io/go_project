@@ -101,8 +101,8 @@ func (r Repo) SetHooksPath(ctx context.Context, dir string) error {
 	return err
 }
 
-// Snapshot stores a tree of the non-ignored files under the pathspec,
-// tracked or not, and returns its id. index is a scratch file that must not exist.
+// Snapshot adds the non-ignored files under the pathspec, tracked or not, to
+// a scratch index and returns the id of the tree it then holds.
 func (r Repo) Snapshot(ctx context.Context, index, pathspec string) (string, error) {
 	env := []string{"GIT_INDEX_FILE=" + index}
 
@@ -113,18 +113,19 @@ func (r Repo) Snapshot(ctx context.Context, index, pathspec string) (string, err
 	return r.line(ctx, env, "write-tree")
 }
 
-// WorkTree stores a tree of the whole work tree: every tracked file as it is
-// on disk, ignored or not, plus untracked files that are not ignored.
-func (r Repo) WorkTree(ctx context.Context, index string) (string, error) {
+// Tracked lists every path in the real index: committed files and staged
+// additions, also those .gitignore matches.
+func (r Repo) Tracked(ctx context.Context) ([]string, error) {
+	return r.names(ctx, "ls-files", "-z")
+}
+
+// Force adds the paths listed in a file, NUL-separated, to a scratch index
+// even when .gitignore matches them. Each path must exist on disk.
+func (r Repo) Force(ctx context.Context, index, list string) error {
 	env := []string{"GIT_INDEX_FILE=" + index}
+	_, err := r.line(ctx, env, "add", "-f", "--pathspec-from-file="+list, "--pathspec-file-nul")
 
-	// Starting from the commit keeps tracked files that .gitignore also
-	// matches; git add alone would leave those out and miss edits to them.
-	if _, err := r.line(ctx, env, "read-tree", "HEAD"); err != nil {
-		return "", err
-	}
-
-	return r.Snapshot(ctx, index, ".")
+	return err
 }
 
 // HasTree reports whether the id still names a tree; git prunes unreferenced ones.

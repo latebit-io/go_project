@@ -1,0 +1,70 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-US
+tone_instructions: >
+  Be direct and technical. No pleasantries. Prefer the smallest change that
+  works. Flag silent error paths, unbounded work, needless defensive code and
+  abstractions with a single user.
+
+reviews:
+  profile: assertive
+
+  # CodeRabbit approves once it has reviewed the latest commit and every
+  # thread is resolved. Main needs one approval, from it or from a person.
+  auto_approvals:
+    enabled: true
+    # The author cannot ask the bot to approve before those conditions hold.
+    allow_author_approval: false
+
+  # The rules themselves live in AGENTS.md and docs/architecture.md, loaded
+  # below as guidelines. These say where the review should spend its effort.
+  path_instructions:
+    - path: "**/*.go"
+      instructions: |
+        CI runs the gate (go run ./tools/gate), which already enforces layout,
+        import direction, naming, lint limits, comment rules, coverage and
+        cross-platform builds. Do not repeat what it checks. Review what a
+        pattern cannot see: wrong behaviour, races, missing edge cases, needless
+        defensive checks, speculative abstractions, comments that are wrong,
+        tests that would pass without the change.
+
+        Never suggest a fix that breaks the rules in docs/architecture.md:
+        no build constraints or platform-suffixed files, no cgo, no //nolint,
+        no time.Sleep, no time.Now outside cmd and internal/platform, no panic
+        or recover, no package-level state, no fmt.Print, no third-party module
+        in domain or app, no bounded context importing another.
+    - path: "internal/*/domain/**"
+      instructions: |
+        Domain layer: entities, value objects, invariants, ports. Check that
+        every invariant is enforced inside the type, that invalid states cannot
+        be built from outside the package, and that nothing here knows about
+        storage, transport, logging or time sources.
+    - path: "internal/*/app/**"
+      instructions: |
+        Use cases. They orchestrate the domain through ports and hold no
+        business rules of their own. Check that a read-check-write sequence is
+        atomic in the port it calls, and that errors keep their cause.
+    - path: "internal/*/adapters/**"
+      instructions: |
+        Adapters implement ports and translate at the boundary. Check that
+        input is validated and bounded here, that domain types do not leak
+        transport or storage details, that internal errors do not reach
+        clients, and that copies protect stored state from callers.
+    - path: "**/*_test.go"
+      instructions: |
+        Tests are black-box, parallel and deterministic: fixed times, no
+        sleeps. Check that each test fails without the behaviour it names and
+        that concurrency claims are tested under the race detector.
+    - path: "{tools/**,.golangci.yml,.golangci-lint-version,.githooks/**,.github/**,.claude/**,.pi/**,.coderabbit.yaml}"
+      instructions: |
+        These files are the guard rails. Flag any change that loosens a rule,
+        raises a limit, adds an exclusion or a //nolint, skips a step or
+        weakens a hook, unless the pull request says that is its purpose. A
+        rule change belongs in its own commit with the reason in the body.
+
+knowledge_base:
+  code_guidelines:
+    # AGENTS.md, CLAUDE.md and GEMINI.md are read by default. The architecture
+    # rules are added for every Go file, wherever it sits.
+    filePatterns:
+      - files: "docs/architecture.md"
+        applyTo: "**/*.go"
