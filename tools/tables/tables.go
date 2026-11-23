@@ -8,6 +8,8 @@ import (
 	"go/parser"
 	"go/token"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Finding is one test function that does not run its cases from a table.
@@ -41,7 +43,7 @@ func Check(name string, src []byte) ([]Finding, error) {
 
 	for _, decl := range file.Decls {
 		fn, isFunc := decl.(*ast.FuncDecl)
-		if !isFunc || !isTest(fn) || runsFromTable(fn.Body) {
+		if !isFunc || !isTest(fn) || runsFromTable(fn) {
 			continue
 		}
 
@@ -51,21 +53,28 @@ func Check(name string, src []byte) ([]Finding, error) {
 	return found, nil
 }
 
-// isTest reports a function the go tool runs as a test. TestMain sets up the
-// test binary and has no cases.
+// isTest reports a function the go tool runs as a test: named Test, or Test
+// followed by anything but a lowercase letter. TestMain sets up the test
+// binary and has no cases.
 func isTest(fn *ast.FuncDecl) bool {
-	name := fn.Name.Name
+	rest, named := strings.CutPrefix(fn.Name.Name, "Test")
+	if !named || fn.Recv != nil || fn.Body == nil || rest == "Main" {
+		return false
+	}
 
-	return fn.Recv == nil && fn.Body != nil && strings.HasPrefix(name, "Test") && name != "TestMain"
+	first, _ := utf8.DecodeRuneInString(rest)
+
+	return rest == "" || !unicode.IsLower(first)
 }
 
 // runsFromTable reports a range loop whose body starts a subtest.
-func runsFromTable(body *ast.BlockStmt) bool {
+func runsFromTable(fn *ast.FuncDecl) bool {
+	testers := testingParams(fn)
 	driven := false
 
-	ast.Inspect(body, func(node ast.Node) bool {
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
 		loop, isRange := node.(*ast.RangeStmt)
-		if isRange && startsSubtest(loop.Body) {
+		if isRange && startsSubtest(loop.Body, testers) {
 			driven = true
 		}
 
@@ -75,7 +84,56 @@ func runsFromTable(body *ast.BlockStmt) bool {
 	return driven
 }
 
-func startsSubtest(body *ast.BlockStmt) bool {
+// testingParams collects the names given to *testing.T parameters, of the
+// test itself and of the function literals inside it, whatever they are called.
+func testingParams(fn *ast.FuncDecl) map[string]bool {
+	names := map[string]bool{}
+
+	collect := func(params *ast.FieldList) {
+		for _, field := range params.List {
+			if !isTestingT(field.Type) {
+				continue
+			}
+
+			for _, name := range field.Names {
+				names[name.Name] = true
+			}
+		}
+	}
+
+	collect(fn.Type.Params)
+
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		if literal, isLiteral := node.(*ast.FuncLit); isLiteral {
+			collect(literal.Type.Params)
+		}
+
+		return true
+	})
+
+	return names
+}
+
+// isTestingT reports the type *testing.T.
+func isTestingT(expr ast.Expr) bool {
+	pointer, isPointer := expr.(*ast.StarExpr)
+	if !isPointer {
+		return false
+	}
+
+	selector, isSelector := pointer.X.(*ast.SelectorExpr)
+	if !isSelector || selector.Sel.Name != "T" {
+		return false
+	}
+
+	pkg, isIdent := selector.X.(*ast.Ident)
+
+	return isIdent && pkg.Name == "testing"
+}
+
+// startsSubtest reports a call of Run on one of the *testing.T values. Any
+// other Run method, such as a command's, is not a subtest.
+func startsSubtest(body *ast.BlockStmt, testers map[string]bool) bool {
 	started := false
 
 	ast.Inspect(body, func(node ast.Node) bool {
@@ -85,7 +143,11 @@ func startsSubtest(body *ast.BlockStmt) bool {
 		}
 
 		method, isMethod := call.Fun.(*ast.SelectorExpr)
-		if isMethod && method.Sel.Name == "Run" {
+		if !isMethod || method.Sel.Name != "Run" {
+			return !started
+		}
+
+		if receiver, isIdent := method.X.(*ast.Ident); isIdent && testers[receiver.Name] {
 			started = true
 		}
 

@@ -38,6 +38,33 @@ func TestCheck(t *testing.T) {
 }`,
 		},
 		{
+			name: "the test parameter under another name",
+			src: `func TestAdd(tt *testing.T) {
+	for _, name := range []string{"a"} {
+		tt.Run(name, func(sub *testing.T) {})
+	}
+}`,
+		},
+		{
+			name: "a loop that runs something else, not a subtest",
+			src: `func TestAdd(t *testing.T) {
+	for _, cmd := range []runner{} {
+		cmd.Run()
+		start().Run()
+	}
+}`,
+			want: notDriven,
+		},
+		{
+			name: "a name the go tool does not run as a test",
+			src:  "func Testhelper(t *testing.T) {\n\tt.Helper()\n}",
+		},
+		{
+			name: "the bare name Test is a test",
+			src:  "func Test(t *testing.T) {}",
+			want: "x_test.go:5: Test is not table-driven",
+		},
+		{
 			name: "single scenario",
 			src:  "func TestAdd(t *testing.T) {\n\tif 1+1 != 2 {\n\t\tt.Fatal(\"math\")\n\t}\n}",
 			want: notDriven,
