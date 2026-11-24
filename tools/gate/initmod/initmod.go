@@ -34,7 +34,8 @@ const (
 	gateTool = upstream + "/tools/gate"
 	// toolsDir holds the gate's source and tests, which a project does not keep.
 	toolsDir = "tools"
-	// gateDir is only in a copy not yet converted; a project's own tools/ has none.
+	// gateDir is a directory only in a copy not yet converted; a project's own
+	// tools/ has none.
 	gateDir  = toolsDir + "/gate"
 	fileMode = 0o644
 )
@@ -119,13 +120,18 @@ func (p Project) convertFiles(ctx context.Context, files *os.Root, next string) 
 // and removes the gate's source. A copy without that source was converted
 // before: its README, and any tools of its own, stay.
 func (p Project) shedTemplate(files *os.Root, next string) error {
-	_, err := files.Stat(gateDir)
+	gate, err := files.Stat(gateDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
 
 	if err != nil {
 		return fmt.Errorf("find gate source: %w", err)
+	}
+
+	// A file of that name, such as a built binary, is the project's own.
+	if !gate.IsDir() {
+		return nil
 	}
 
 	names := strings.NewReplacer("{{name}}", path.Base(next), "{{upstream}}", upstream, "{{gate}}", gateTool)

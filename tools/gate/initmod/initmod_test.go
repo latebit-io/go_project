@@ -29,7 +29,9 @@ const (
 	shed     = "ok: README.md started, tools/ removed\n"
 	nextStep = "next: go tool gate setup\n"
 
+	readmeName     = "README.md"
 	templateReadme = "# go_project\n"
+	ownReadme      = "# mine\n"
 	projectReadme  = "# shop\n"
 
 	source = `// Package a mentions "example.com/old" in prose.
@@ -137,7 +139,7 @@ func (c *convertCase) check(t *testing.T, root string, got outcome) {
 
 	wantReadme := cmp.Or(c.wantReadme, templateReadme)
 
-	readme, err := fs.ReadFile(files, "README.md")
+	readme, err := fs.ReadFile(files, readmeName)
 	if err != nil || !strings.HasPrefix(string(readme), wantReadme) || strings.Contains(string(readme), "{{") {
 		t.Fatalf("README.md after Convert() =\n%s\n%v\nwant it to start %q, placeholders filled", readme, err, wantReadme)
 	}
@@ -156,9 +158,9 @@ func module(t *testing.T, extra fstest.MapFS) string {
 
 	root := t.TempDir()
 	files := fstest.MapFS{
-		goMod:       file("module example.com/old\n"),
-		"a.go":      file(source),
-		"README.md": file(templateReadme + "\nUse as a template.\n"),
+		goMod:      file("module example.com/old\n"),
+		"a.go":     file(source),
+		readmeName: file(templateReadme + "\nUse as a template.\n"),
 		// The gate's own source, which a project must not keep.
 		"tools/gate/main.go":      file("package main\n"),
 		"tools/gate/main_test.go": file("package main\n"),
@@ -173,6 +175,22 @@ func module(t *testing.T, extra fstest.MapFS) string {
 	}
 
 	return root
+}
+
+// converted is a project init has run on before: renamed, with a README and
+// tools of its own and without the gate's source. Files in own are added.
+func converted(own fstest.MapFS) fstest.MapFS {
+	files := fstest.MapFS{
+		goMod:               file("module " + next + "\n"),
+		readmeName:          file(ownReadme),
+		"tools/own/main.go": file("package main\n"),
+		// The gate's source, in every fresh copy, is gone.
+		"tools/gate/main.go": nil, "tools/gate/main_test.go": nil,
+	}
+
+	maps.Copy(files, own)
+
+	return files
 }
 
 func TestConvert(t *testing.T) {
@@ -201,14 +219,16 @@ func TestConvert(t *testing.T) {
 			// Without the gate's source the copy was converted before: the README
 			// and the tools/ directory are the project's own.
 			name: "leaves the README and tools of a converted project alone", next: next, runs: 1,
-			extra: fstest.MapFS{
-				goMod:                file("module " + next + "\n"),
-				"README.md":          file("# mine\n"),
-				"tools/gate/main.go": nil, "tools/gate/main_test.go": nil,
-				"tools/own/main.go": file("package main\n"),
-			},
+			extra:      converted(nil),
 			wantSource: source, wantCalls: []string{pin, format}, keepsTools: true,
-			wantReadme: "# mine\n", wantOut: pinned + nextStep,
+			wantReadme: ownReadme, wantOut: pinned + nextStep,
+		},
+		{
+			// Only the gate's source directory marks an unconverted copy.
+			name: "leaves a project alone whose tools/gate is a file", next: next, runs: 1,
+			extra:      converted(fstest.MapFS{"tools/gate": file("a built binary")}),
+			wantSource: source, wantCalls: []string{pin, format}, keepsTools: true,
+			wantReadme: ownReadme, wantOut: pinned + nextStep,
 		},
 		{
 			name: "rejects a path with spaces", next: "Bad Path", runs: 1,
