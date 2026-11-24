@@ -126,6 +126,7 @@ func TestDispatch(t *testing.T) {
 		{
 			name: "init renames the module", args: []string{"init", "github.com/acme/shop"},
 			wantDone: true, wantCall: "go mod edit -module github.com/acme/shop",
+			wantOut: "next: go tool gate setup",
 		},
 	}
 

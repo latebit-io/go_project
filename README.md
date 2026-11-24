@@ -14,9 +14,10 @@ go tool gate setup
 ```
 
 `init` renames the module in `go.mod` and every import, deletes `tools/` (the
-gate's source and tests, which a project does not keep) and pins the gate in
-`go.mod` to a released version of this repository. From then on
-`go tool gate` runs that version, and Dependabot proposes newer ones.
+gate's source and tests, which a project does not keep), pins the gate in
+`go.mod` to a released version of this repository and replaces this README
+with a short one for your project. From then on `go tool gate` runs that
+version, and Dependabot proposes newer ones.
 
 Then add the first bounded context under `internal/<context>/`, using the
 example as the pattern.
@@ -111,8 +112,9 @@ To automate another agent, point its stop hook at
 
 The step does three things:
 
-1. After a major Go change (threshold in `tools/gate/agent`) it has the agent
-   ask whether to run a simplify pass. Your next message is the answer.
+1. After a major Go change, counted in added lines (threshold in
+   `tools/gate/agent`), it has the agent ask whether to run a simplify pass.
+   Your next message is the answer.
 2. It runs the gate. An unchanged tree reuses the last result.
 3. When the gate passes it has the agent ask whether to stage the changes and
    offer a commit subject. You commit.

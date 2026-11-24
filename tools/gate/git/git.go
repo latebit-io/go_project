@@ -147,9 +147,9 @@ func (r Repo) HasTree(ctx context.Context, id string) bool {
 	return err == nil
 }
 
-// ChangedLines counts lines added plus deleted under the pathspec between
-// two trees or commits.
-func (r Repo) ChangedLines(ctx context.Context, from, to, pathspec string) (int, error) {
+// AddedLines counts lines added under the pathspec between two trees or
+// commits. A changed line counts as added; a deleted one does not count.
+func (r Repo) AddedLines(ctx context.Context, from, to, pathspec string) (int, error) {
 	rows, err := r.lines(ctx, nil, "diff", "--numstat", from, to, "--", pathspec)
 	if err != nil {
 		return 0, err
@@ -158,11 +158,11 @@ func (r Repo) ChangedLines(ctx context.Context, from, to, pathspec string) (int,
 	total := 0
 
 	for _, row := range rows {
-		// Binary files show "-" in both columns and count as no lines.
-		for _, column := range strings.Fields(row)[:2] {
-			if count, err := strconv.Atoi(column); err == nil {
-				total += count
-			}
+		// The first column is the added lines; a binary file shows "-" there
+		// and counts as none.
+		added, _, _ := strings.Cut(row, "\t")
+		if count, err := strconv.Atoi(added); err == nil {
+			total += count
 		}
 	}
 

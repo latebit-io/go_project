@@ -188,7 +188,8 @@ func (a *app) init(ctx context.Context, args []string) error {
 		return errUsage
 	}
 
-	if err := initmod.Rename(ctx, a.root, a.runner(a.out), args[0]); err != nil {
+	project := initmod.Project{Root: a.root, Run: a.runner(a.out), Out: a.out}
+	if err := project.Convert(ctx, args[0]); err != nil {
 		return fmt.Errorf("init: %w", err)
 	}
 
