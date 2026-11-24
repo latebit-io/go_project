@@ -115,7 +115,7 @@ Never loosen one to make unrelated work pass.
 
 - Layer policy: `tools/arch/rules.go`, with a test in `check_test.go`.
 - Branch and commit rules: `tools/gate/conv`. Coverage floor: `tools/gate/check`.
-  Major-change threshold: `tools/gate/agent`.
+  Major-change threshold, in added lines: `tools/gate/agent`.
 - Comment patterns, cap, emoji ranges: `tools/clean/rules.go`, with a test in `check_test.go`.
 - Lint: `.golangci.yml`; every disabled linter carries its reason on the same line.
 - `//nolint` names the linter and explains: `//nolint:gosec // input is a constant`.

@@ -92,10 +92,10 @@ func TestQueries(t *testing.T) {
 			want: []string{"a.go", "café b.go", "c.go"}, wantCall: "git diff --name-only -z --diff-filter=AM abc -- *_test.go",
 		},
 		{
-			name:    "changed lines skip binary rows",
-			answers: map[string]proctest.Answer{"git diff --numstat": {Out: "10\t2\ta.go\n-\t-\tlogo.png\n3\t0\tb.go\n"}},
-			ask:     func(ctx context.Context, r git.Repo) (any, error) { return r.ChangedLines(ctx, "a", "b", "*.go") },
-			want:    15,
+			name:    "added lines leave out deleted lines and binary rows",
+			answers: map[string]proctest.Answer{"git diff --numstat": {Out: "10\t2\ta.go\n-\t-\tlogo.png\n3\t900\tb.go\n"}},
+			ask:     func(ctx context.Context, r git.Repo) (any, error) { return r.AddedLines(ctx, "a", "b", "*.go") },
+			want:    13,
 		},
 		{
 			name:    "snapshot writes a tree from the scratch index",
@@ -228,8 +228,8 @@ func TestFailuresAreReported(t *testing.T) {
 			ask: func(ctx context.Context, r git.Repo) (any, error) { return r.Changed(ctx, commit, "AM") },
 		},
 		{
-			name: "changed lines", failing: gitDiff,
-			ask: func(ctx context.Context, r git.Repo) (any, error) { return r.ChangedLines(ctx, "a", "b", "*.go") },
+			name: "added lines", failing: gitDiff,
+			ask: func(ctx context.Context, r git.Repo) (any, error) { return r.AddedLines(ctx, "a", "b", "*.go") },
 		},
 		{
 			name: "snapshot reports a failed add instead of an empty tree", failing: "git add",

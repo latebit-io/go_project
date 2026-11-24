@@ -233,13 +233,19 @@ func TestStep(t *testing.T) {
 		},
 		{
 			name:  "a major change asks about simplify first, once, and the prompt settles it",
-			given: func(r *rig) { r.answers[numstat] = proctest.Answer{Out: "150\t60\ta.go\n"} },
+			given: func(r *rig) { r.answers[numstat] = proctest.Answer{Out: "150\t60\ta.go\n60\t0\tb.go\n"} },
 			acts: []act{
-				{mode: claudeStop, done: true, out: "210 lines"},
+				{mode: claudeStop, done: true, out: "210 lines added"},
 				{mode: claudeStop, done: true, out: "stage them", gates: 1},
 				{mode: "claude-prompt", done: true, gates: 1},
 			},
 			state: map[string]string{"simplify-baseline": firstTree, "simplify-asked": ""},
+		},
+		{
+			// What init does to a new project: thousands of lines gone, few added.
+			name:  "deleting code is not a major change",
+			given: func(r *rig) { r.answers[numstat] = proctest.Answer{Out: "19\t5199\ta.go\n"} },
+			acts:  []act{{mode: "", out: stagingAsk, gates: 1}},
 		},
 		{
 			name:  "without a prompt hook, continued work settles the simplify question",

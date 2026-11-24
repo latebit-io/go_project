@@ -19,14 +19,15 @@ import (
 	"github.com/latebit-io/go_project/tools/gate/git"
 )
 
-// majorLines is how many changed Go lines, added plus deleted, make a change major.
+// majorLines is how many added Go lines make a change major. Deleted lines
+// do not count: removed code leaves nothing to simplify.
 const majorLines = 200
 
 // tailLines is how much of a failing gate's output goes back to the agent.
 const tailLines = 60
 
 const (
-	simplifyQuestion = "Major Go change: %d lines since the last simplify question. Ask the user in your reply " +
+	simplifyQuestion = "Major Go change: %d lines added since the last simplify question. Ask the user in your reply " +
 		"whether to run a simplify pass on the changes, then stop. Their next message is the answer; " +
 		"run the pass only on a yes."
 	commitQuestion = "The gate passes and the tree has uncommitted changes. Ask the user in your reply whether " +
@@ -152,9 +153,9 @@ func (s *session) askAboutSimplify(ctx context.Context) (bool, error) {
 		base = "HEAD"
 	}
 
-	lines, err := s.cfg.Repo.ChangedLines(ctx, base, goNow, "*.go")
+	lines, err := s.cfg.Repo.AddedLines(ctx, base, goNow, "*.go")
 	if err != nil {
-		return false, fmt.Errorf("count changed Go lines: %w", err)
+		return false, fmt.Errorf("count added Go lines: %w", err)
 	}
 
 	if lines < majorLines {
